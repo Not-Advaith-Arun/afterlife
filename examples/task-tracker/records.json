@@ -1,0 +1,7 @@
+{
+  "records": [
+    {"id": "task-001", "title": "Document the field kit", "status": "In progress", "notes": "Photograph each sensor and record its operating range.", "hours": 3, "important": true},
+    {"id": "task-002", "title": "Test without a connection", "status": "Planned", "notes": "Create a task, edit it, and download a new app copy while offline.", "hours": 2, "important": true},
+    {"id": "task-003", "title": "Prepare the handover", "status": "Done", "notes": "The exported file includes everything needed to continue working.", "hours": 1, "important": false}
+  ]
+}

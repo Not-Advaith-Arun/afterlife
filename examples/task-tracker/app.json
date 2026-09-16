@@ -1,0 +1,15 @@
+{
+  "format": "afterlife/v1",
+  "app_id": "fieldwork",
+  "title": "Fieldwork",
+  "description": "A small project tracker you can keep, edit, and take anywhere.",
+  "record_label": "task",
+  "required_capabilities": ["crud", "search", "json-import-export", "local-persistence"],
+  "fields": [
+    {"name": "title", "label": "Task", "type": "text", "required": true},
+    {"name": "status", "label": "Status", "type": "select", "required": true, "options": ["Planned", "In progress", "Done"]},
+    {"name": "notes", "label": "Notes", "type": "multiline"},
+    {"name": "hours", "label": "Hours", "type": "integer"},
+    {"name": "important", "label": "Priority", "type": "boolean"}
+  ]
+}
