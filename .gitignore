@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+build/
+*.egg-info/
+dist/*.whl
+dist/*.tar.gz
+dist/*.html
+dist/*.json
