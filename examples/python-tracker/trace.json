@@ -1,0 +1,17 @@
+{
+  "format": "afterlife-trace/v1",
+  "operations": [
+    {"op": "create", "record": {"id": "task-3"}},
+    {"op": "edit", "id": "task-3", "changes": {"title": "", "done": true, "estimate": 0}},
+    {"op": "edit", "id": "task-3", "changes": {"priority": null}},
+    {"op": "edit", "id": "task-3", "changes": {"estimate": null}},
+    {"op": "create", "record": {"id": "task-1"}},
+    {"op": "create", "record": {"id": "bad", "priority": true}},
+    {"op": "edit", "id": "task-3", "changes": {"title": "</script><img src=x onerror=alert(1)>"}},
+    {"op": "delete", "id": "task-2"},
+    {"op": "delete", "id": "task-2"},
+    {"op": "edit", "id": "task-1", "changes": {"id": "renamed"}},
+    {"op": "create", "record": {"id": "bad", "estimate": 9007199254740992}},
+    {"op": "create", "record": {"id": "bad", "network": "https://example.invalid"}}
+  ]
+}

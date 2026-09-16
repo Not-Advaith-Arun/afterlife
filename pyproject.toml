@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "afterlife-offline"
-version = "0.1.0"
-description = "Compile declarative record applications into self-contained offline HTML"
+version = "0.2.0"
+description = "Extract supported Python record models and compile self-contained offline HTML apps"
 requires-python = ">=3.10"
 dependencies = []
 

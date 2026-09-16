@@ -1,0 +1,17 @@
+{
+  "format": "afterlife-trace/v1",
+  "operations": [
+    {"op": "create", "record": {"id": "equipment-3"}},
+    {"op": "edit", "id": "equipment-3", "changes": {"name": "Tripod", "quantity": 0, "available": false}},
+    {"op": "edit", "id": "equipment-3", "changes": {"quantity": null}},
+    {"op": "edit", "id": "equipment-3", "changes": {"available": "false"}},
+    {"op": "create", "record": {"id": "equipment-1"}},
+    {"op": "create", "record": {"id": "\u0085"}},
+    {"op": "create", "record": {"id": "\ufeff", "name": "Non-whitespace ID"}},
+    {"op": "edit", "id": "equipment-1", "changes": {"notes": "Calibration due 😀"}},
+    {"op": "delete", "id": "equipment-2"},
+    {"op": "edit", "id": "equipment-2", "changes": {"name": "Missing"}},
+    {"op": "create", "record": {"id": "bad", "quantity": 1.5}},
+    {"op": "create", "record": {"id": "bad", "notes": null}}
+  ]
+}
