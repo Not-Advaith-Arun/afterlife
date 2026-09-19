@@ -149,6 +149,27 @@ class EndToEndTests(unittest.TestCase):
             saved_restored = restored.read_bytes()
             restored_data = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', restored.read_text(), re.S)[1])
             self.assertEqual(restored_data["records"], rows)
+            manifest = root / "existing-manifest.json"
+            manifest.write_text('{"previous":"preserve this review"}')
+            protected = {p: p.read_bytes() for p in (original, current, incoming, spec, review_file, restored, manifest)}
+            for source in (current, review_file):
+                for link_kind in ("hard", "symbolic"):
+                    alias = root / "input-alias"
+                    if link_kind == "hard":
+                        alias.hardlink_to(source)
+                    else:
+                        alias.symlink_to(source)
+                    try:
+                        for destination in ("html", "manifest"):
+                            cli("from-export", spec, incoming, "--review", review_file, "--against", current,
+                                "-o", alias if destination == "html" else restored,
+                                "--manifest", alias if destination == "manifest" else manifest,
+                                "--force", expected=2)
+                            self.assertEqual({p: p.read_bytes() for p in protected}, protected)
+                            self.assertEqual(alias.read_bytes(), protected[source])
+                            self.assertEqual(alias.is_symlink(), link_kind == "symbolic")
+                    finally:
+                        alias.unlink()
             changed = json.loads(incoming.read_text())
             changed["records"][0]["title"] = "Changed after human review"
             incoming.write_text(json.dumps(changed))
