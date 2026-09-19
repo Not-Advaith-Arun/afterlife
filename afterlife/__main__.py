@@ -35,6 +35,9 @@ def main(argv=None):
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")
     parser.add_argument("--manifest", type=Path, help="optional compilation audit JSON")
     parser.add_argument("--force", action="store_true", help="replace existing output files")
+    if from_export:
+        parser.add_argument("--review", type=Path, help="Exact saved review-export report; requires --against")
+        parser.add_argument("--against", type=Path, help="Current backup used by review-export; requires --review")
     if from_python:
         parser.add_argument("--app-id", help="app identifier (default: kebab-case class name)")
         parser.add_argument("--title", help="artifact title")
@@ -45,6 +48,10 @@ def main(argv=None):
         extracted_spec = getattr(args, "extracted_spec", None)
         targets = [args.output] + ([args.manifest] if args.manifest else []) + ([extracted_spec] if extracted_spec else [])
         inputs = [args.spec, args.data]
+        if from_export:
+            if bool(args.review) != bool(args.against):
+                raise CompileError("Guarded restoration requires both --review and --against")
+            inputs += [path for path in (args.review, args.against) if path]
         if any(_same_file(first, second) for index, first in enumerate(targets) for second in targets[index + 1:]):
             raise CompileError("HTML output, manifest, and extracted specification must use different paths")
         if any(_same_file(target, source) for target in targets for source in inputs):
@@ -66,6 +73,12 @@ def main(argv=None):
         data = load_json(args.data)
         if from_export:
             from .transfers import backup_records
+            if args.review:
+                from .transfers import review_export
+                from .compiler import _canonical
+                expected = review_export(spec, load_json(args.against), data)
+                if _canonical(load_json(args.review)) != _canonical(expected):
+                    raise CompileError("Stale or modified backup review; compare the current backups again before restoring")
             data = {"records": backup_records(spec, data)}
         document, manifest = compile_app(spec, data)
         if evidence is not None:
