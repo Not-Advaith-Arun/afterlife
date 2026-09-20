@@ -215,6 +215,46 @@ class EndToEndTests(unittest.TestCase):
             rejected = cli("review-export", large_spec, incoming, "--against", incoming, expected=2)
             self.assertIn("Normalized backup data exceeds 10 MiB", rejected.stderr)
 
+    def test_backup_check_distinguishes_normalized_equality_order_edits_and_invalid_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def cli(*args, expected=0):
+                result = subprocess.run([sys.executable, "-m", "afterlife", *map(str, args)],
+                    cwd=ROOT, text=True, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                return result
+            spec = ROOT / "examples/task-tracker/app.json"
+            artifact, current, incoming = [root / name for name in ("app.html", "current.json", "incoming.json")]
+            cli(spec, ROOT / "examples/task-tracker/records.json", "-o", artifact)
+            payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', artifact.read_text(), re.S)[1])
+            envelope = {"format": "afterlife-data/v1", "app_id": payload["spec"]["app_id"],
+                "spec_fingerprint": payload["spec_fingerprint"], "records": payload["records"]}
+            current.write_text(json.dumps(envelope))
+            incoming.write_text(json.dumps(envelope, indent=4))
+            args = ("review-export", spec, incoming, "--against", current)
+            same = json.loads(cli(*args, "--check").stdout)
+            self.assertEqual(same["current_records_sha256"], same["incoming_records_sha256"])
+            reordered = {**envelope, "records": list(reversed(payload["records"]))}
+            incoming.write_text(json.dumps(reordered))
+            order = json.loads(cli(*args, "--check", expected=1).stdout)
+            self.assertEqual(order["changed"], [])
+            self.assertNotEqual(order["current_records_sha256"], order["incoming_records_sha256"])
+            self.assertEqual(json.loads(cli(*args).stdout), order)
+            changed = json.loads(json.dumps(envelope))
+            changed["records"][0]["title"] = "Private changed backup value"
+            incoming.write_text(json.dumps(changed))
+            saved = {p: p.read_bytes() for p in (artifact, current, incoming)}
+            report = cli(*args, "--check", expected=1)
+            self.assertEqual(json.loads(report.stdout)["counts"]["changed"], 1)
+            self.assertNotIn("Private changed backup value", report.stdout)
+            self.assertEqual({p: p.read_bytes() for p in saved}, saved)
+            incoming.write_text(json.dumps({**envelope, "app_id": "foreign"}))
+            invalid = incoming.read_bytes()
+            cli(*args, "--check", expected=2)
+            self.assertEqual(incoming.read_bytes(), invalid)
+            self.assertEqual(artifact.read_bytes(), saved[artifact])
+            self.assertEqual(current.read_bytes(), saved[current])
+
     def test_real_runtime_backup_rebuild_and_foreign_envelopes_preserve_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

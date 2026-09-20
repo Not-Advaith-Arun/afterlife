@@ -104,12 +104,13 @@ def review_export_main(argv):
     parser.add_argument("spec", type=Path)
     parser.add_argument("backup", type=Path)
     parser.add_argument("--against", type=Path, required=True, help="Current matching JSON backup")
+    parser.add_argument("--check", action="store_true", help="Exit 1 when normalized records or their array order differ; 2 for invalid input")
     args = parser.parse_args(argv)
     try:
         from .transfers import review_export
         result = review_export(load_json(args.spec), load_json(args.against), load_json(args.backup))
         print(json.dumps(result, indent=2, ensure_ascii=True))
-        return 0
+        return int(args.check and result["current_records_sha256"] != result["incoming_records_sha256"])
     except (CompileError, OSError) as error:
         print(f"afterlife: {error}", file=sys.stderr)
         return 2
