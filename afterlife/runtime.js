@@ -673,8 +673,13 @@
         if (file.size > MAX_BYTES) throw new Error("Import exceeds 10 MiB.");
         const imported = validateEnvelope(payload, JSON.parse(await file.text()));
         const differences = compareImport(spec, records, imported);
+        const currentIDs = new Set(records.map(row => row.id));
+        const incomingIDs = new Set(imported.map(row => row.id));
+        const previousOrder = records.filter(row => incomingIDs.has(row.id)).map(row => row.id);
+        const incomingOrder = imported.filter(row => currentIDs.has(row.id)).map(row => row.id);
+        const reordered = JSON.stringify(previousOrder) !== JSON.stringify(incomingOrder);
         pendingImport = {records: imported, baseline: JSON.stringify(records)};
-        importSummary.textContent = `Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged. Export first to keep the current copy.`;
+        importSummary.textContent = `Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged.${reordered ? " Retained record order will change." : ""} Export first to keep the current copy.`;
         importIDs.textContent = JSON.stringify(differences, null, 2);
         importReview.hidden = false;
         applyImport.focus();
