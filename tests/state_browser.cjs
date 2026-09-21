@@ -15,7 +15,7 @@ const {launch, offlineContext} = require("./browser_support.cjs");
   try {
     const input = path.join(directory, "records.json"), artifact = path.join(directory, "app.html");
     const records = Array.from({length: 205}, (_, index) => ({
-      id: `note-${index}`, title: `Note ${index}`, pages: index, archived: false,
+      id: `note-${index}`, title: `Note ${index}`, pages: index, archived: index % 2 === 0,
     }));
     await fs.writeFile(input, JSON.stringify({records}));
     execFileSync(process.env.PYTHON || "python3", ["-m", "afterlife", "from-python",
@@ -114,6 +114,34 @@ const {launch, offlineContext} = require("./browser_support.cjs");
     const secondFile = path.join(directory, "matching-last-page.json");
     await (await secondDownload).saveAs(secondFile);
     assert.deepEqual(JSON.parse(await fs.readFile(secondFile, "utf8")).records, expected);
+    assert.equal(await first.evaluate(key => localStorage.getItem(key), payload.storage_key), winning);
+    await first.locator("#filter-field").selectOption("archived");
+    await first.locator("#filter-value").selectOption("true");
+    const filtered = expected.filter(row => row.archived);
+    assert.equal(filtered.length, 55);
+    assert.equal(await first.locator("tbody tr").count(), filtered.length);
+    const csvDownload = first.waitForEvent("download");
+    await first.getByRole("button", {name: "Export matching CSV", exact: true}).click();
+    const csvFile = path.join(directory, "filtered.csv");
+    await (await csvDownload).saveAs(csvFile);
+    const table = JSON.parse(execFileSync(process.env.PYTHON || "python3", ["-c",
+      "import csv,io,json,sys; print(json.dumps(list(csv.reader(io.StringIO(sys.stdin.read())))))"],
+      {input: await fs.readFile(csvFile, "utf8"), encoding: "utf8"}));
+    const columns = table[0];
+    assert.deepEqual(columns, ["id", ...payload.spec.fields.map(field => field.name)]);
+    assert.equal(table.length, filtered.length + 1);
+    assert.deepEqual(table.slice(1).map(row => row[0]), filtered.map(row => "'" + row.id));
+    assert.deepEqual(table.slice(1).map(row => row[columns.indexOf("pages")]), filtered.map(row => String(row.pages)));
+    assert.ok(table.slice(1).every(row => row[columns.indexOf("archived")] === "true"));
+    assert.ok(table.slice(1).every(row => row[columns.indexOf("body")] === "'First line\nSecond line"));
+    assert.ok(table.slice(1).every(row => row[columns.indexOf("rating")] === ""));
+    await first.getByRole("button", {name: "Reset view", exact: true}).click();
+    assert.equal(await first.getByRole("searchbox").inputValue(), "");
+    assert.equal(await first.locator("#sort-field").inputValue(), "");
+    assert.equal(await first.locator("#filter-field").inputValue(), "");
+    assert.equal(await first.locator("#filter-value").isDisabled(), true);
+    assert.equal(await first.getByRole("button", {name: "Reverse sort direction", exact: true}).isDisabled(), true);
+    assert.equal(await first.locator("tbody tr").count(), 100);
     assert.equal(await first.evaluate(key => localStorage.getItem(key), payload.storage_key), winning);
     const completeDownload = first.waitForEvent("download");
     await first.getByRole("button", {name: "Export JSON", exact: true}).click();
