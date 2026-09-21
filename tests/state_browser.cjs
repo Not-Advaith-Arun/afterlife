@@ -55,7 +55,7 @@ const {launch, offlineContext} = require("./browser_support.cjs");
     assert.equal(await second.locator("#field-title").inputValue(), "Preserved draft");
     const payload = JSON.parse((await fs.readFile(artifact, "utf8"))
       .match(/<script type="application\/json" id="afterlife-data">(.*?)<\/script>/s)[1]);
-    const winning = await first.evaluate(key => localStorage.getItem(key), payload.storage_key);
+    let winning = await first.evaluate(key => localStorage.getItem(key), payload.storage_key);
     assert.match(winning, /Winning note/);
     assert.doesNotMatch(winning, /Preserved draft/);
     await second.getByRole("button", {name: "Keep editing a separate copy", exact: true}).click();
@@ -67,6 +67,33 @@ const {launch, offlineContext} = require("./browser_support.cjs");
     const exported = path.join(directory, "fork.json");
     await (await download).saveAs(exported);
     assert.match(await fs.readFile(exported, "utf8"), /Preserved draft/);
+    // A reviewed replacement must not overwrite a newer save in another tab.
+    const importing = await newPage();
+    const incomingFile = path.join(directory, "import-one.json");
+    await fs.writeFile(incomingFile, JSON.stringify({format: "afterlife-data/v1", app_id: payload.spec.app_id,
+      spec_fingerprint: payload.spec_fingerprint, records: [payload.records[0]]}));
+    await importing.locator("#import-file").setInputFiles(incomingFile);
+    await importing.getByRole("heading", {name: "Review import", exact: true}).waitFor();
+    await first.getByRole("button", {name: "New note", exact: true}).click();
+    await first.locator("#field-title").fill("Concurrent import winner");
+    await first.getByRole("button", {name: "Save record", exact: true}).click();
+    await first.locator("aside.editor").waitFor({state: "hidden"});
+    winning = await first.evaluate(key => localStorage.getItem(key), payload.storage_key);
+    assert.match(winning, /Concurrent import winner/);
+    await importing.getByText("Another tab changed this app.", {exact: false}).waitFor();
+    await importing.getByRole("button", {name: "Apply import", exact: true}).click();
+    assert.equal(await first.evaluate(key => localStorage.getItem(key), payload.storage_key), winning);
+    assert.equal(await importing.getByRole("heading", {name: "Review import", exact: true}).isVisible(), true);
+    const refusedDownload = importing.waitForEvent("download");
+    await importing.getByRole("button", {name: "Export JSON", exact: true}).click();
+    const refusedFile = path.join(directory, "refused-import.json");
+    await (await refusedDownload).saveAs(refusedFile);
+    assert.equal(JSON.parse(await fs.readFile(refusedFile, "utf8")).records.length, 207);
+    await importing.getByRole("button", {name: "Keep editing a separate copy", exact: true}).click();
+    await importing.getByRole("button", {name: "Apply import", exact: true}).click();
+    await importing.getByText("Imported 1 records.", {exact: true}).waitFor();
+    assert.equal(await importing.locator("tbody tr").count(), 1);
+    assert.equal(await first.evaluate(key => localStorage.getItem(key), payload.storage_key), winning);
     // Matching exports must include off-screen pages in the selected view order.
     await first.getByRole("searchbox").fill("Note 1");
     await first.locator("#sort-field").selectOption("pages");
@@ -92,13 +119,13 @@ const {launch, offlineContext} = require("./browser_support.cjs");
     await first.getByRole("button", {name: "Export JSON", exact: true}).click();
     const completeFile = path.join(directory, "complete.json");
     await (await completeDownload).saveAs(completeFile);
-    assert.equal(JSON.parse(await fs.readFile(completeFile, "utf8")).records.length, 207);
+    assert.equal(JSON.parse(await fs.readFile(completeFile, "utf8")).records.length, 208);
     await first.reload();
     assert.equal(await first.evaluate(key => localStorage.getItem(key), payload.storage_key), winning);
     assert.deepEqual(errors, []);
     assert.deepEqual(network, []);
     await context.close();
-    console.log("PASS Python conversion, page bounds, persistent reload, conflict-copy recovery and complete ordered matching exports across pages");
+    console.log("PASS Python conversion, page bounds, persistent reload, editor/import conflict-copy recovery and complete ordered matching exports across pages");
   } finally {
     await browser.close();
     await fs.rm(directory, {recursive: true, force: true});
