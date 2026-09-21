@@ -680,7 +680,11 @@
         const reordered = JSON.stringify(previousOrder) !== JSON.stringify(incomingOrder);
         pendingImport = {records: imported, baseline: JSON.stringify(records)};
         importSummary.textContent = `Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged.${reordered ? " Retained record order will change." : ""} Export first to keep the current copy.`;
-        importIDs.textContent = JSON.stringify(differences, null, 2);
+        const previous = new Map(records.map(row => [row.id, row]));
+        const changedIDs = new Set(differences.changed);
+        const changedFields = imported.filter(row => changedIDs.has(row.id)).map(row => ({id: row.id,
+          fields: spec.fields.filter(field => previous.get(row.id)[field.name] !== row[field.name]).map(field => field.name).sort()}));
+        importIDs.textContent = JSON.stringify({...differences, changed_fields: changedFields}, null, 2);
         importReview.hidden = false;
         applyImport.focus();
         tell("Import preview ready. Current records have not changed.");
