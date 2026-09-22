@@ -29,7 +29,8 @@ const {execFileSync} = require("node:child_process");
     const attack = '</script><img src="https://example.invalid/x" onerror="globalThis.pwned=true">';
     await page.getByLabel("Task *", {exact: true}).fill(attack);
     await page.getByLabel("Status *", {exact: true}).selectOption("Planned");
-    await page.getByLabel("Notes", {exact: true}).fill("Browser regression record");
+    const formulaNotes = '=HYPERLINK("https://example.invalid/","regression")\n=1+1';
+    await page.getByLabel("Notes", {exact: true}).fill(formulaNotes);
     await page.getByLabel("Hours", {exact: true}).fill("7");
     await page.getByRole("button", {name: "Save record", exact: true}).click();
     await page.locator("aside.editor").waitFor({state: "hidden"});
@@ -59,6 +60,22 @@ const {execFileSync} = require("node:child_process");
     const exported = JSON.parse(await fs.readFile(jsonFile, "utf8"));
     assert.equal(exported.records.length, 4);
     assert.equal(exported.records.find(record => record.title === attack).hours, 8);
+    assert.equal(exported.records.find(record => record.title === attack).notes, formulaNotes);
+    // Exercise the actual toolbar/download boundary, not only the CSV helper.
+    const csvDownload = page.waitForEvent("download");
+    await page.getByRole("button", {name: "Export CSV", exact: true}).click();
+    const csvFile = path.join(directory, "literal-text.csv");
+    await (await csvDownload).saveAs(csvFile);
+    const csvRows = JSON.parse(execFileSync(process.env.PYTHON || "python3", ["-c",
+      "import csv,io,json,sys; print(json.dumps(list(csv.reader(io.StringIO(sys.stdin.read())))))"],
+      {input: await fs.readFile(csvFile, "utf8"), encoding: "utf8"}));
+    const header = csvRows[0], titleIndex = header.indexOf("title"), notesIndex = header.indexOf("notes");
+    const csvRecord = csvRows.slice(1).find(row => row[titleIndex] === "'" + attack);
+    assert.equal(csvRows.length, 5); // Export all records even though the table is filtered to one.
+    assert.equal(csvRecord[notesIndex], "'" + formulaNotes);
+    assert.equal(csvRecord[header.indexOf("hours")], "8");
+    assert.ok(csvRows.every(row => row.length === header.length));
+    assert.equal(await page.locator("tbody tr").count(), 1);
 
     const htmlDownload = page.waitForEvent("download");
     await page.getByRole("button", {name: "Download app", exact: true}).click();
