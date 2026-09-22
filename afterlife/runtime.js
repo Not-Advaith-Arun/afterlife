@@ -442,7 +442,15 @@
         tell(`Imported ${incoming.length} records.`);
       }
     }, "primary");
-    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, cancelImport);
+    const exportImportReview = button("Export review JSON", () => {
+      if (!pendingImport || committing) return;
+      if (stale || JSON.stringify(records) !== pendingImport.baseline) {
+        return tell("Review is stale. Choose the import file again before exporting its summary.", true);
+      }
+      download(JSON.stringify(pendingImport.review, null, 2), spec.app_id + "-import-review.json", "application/json");
+      tell("Review summary download requested. Record values are excluded; export data separately to keep a backup.");
+    });
+    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, exportImportReview, cancelImport);
     const layout = node("div", undefined, "workspace");
     const list = node("section", undefined, "records");
     list.id = "records";
@@ -685,6 +693,13 @@
         const changedFields = imported.filter(row => changedIDs.has(row.id)).map(row => ({id: row.id,
           fields: spec.fields.filter(field => previous.get(row.id)[field.name] !== row[field.name]).map(field => field.name).sort()}));
         importIDs.textContent = JSON.stringify({...differences, changed_fields: changedFields}, null, 2);
+        pendingImport.review = {format: "afterlife-import-summary/v1", app_id: spec.app_id,
+          spec_fingerprint: payload.spec_fingerprint,
+          counts: {current: records.length, incoming: imported.length, added: differences.added.length,
+            removed: differences.removed.length, changed: differences.changed.length, unchanged: differences.unchanged.length},
+          added: differences.added, removed: differences.removed, changed_fields: changedFields,
+          retained_order_changed: reordered,
+          scope: "Metadata-only draft preview. IDs and field names included; record values excluded. This is not a data backup, authenticated snapshot, or guarded-restoration report. Separate requests may observe different records; review again before applying."};
         importReview.hidden = false;
         applyImport.focus();
         tell("Import preview ready. Current records have not changed.");
