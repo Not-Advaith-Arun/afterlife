@@ -14,6 +14,46 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_audit_and_extraction_never_execute_supplied_python_or_follow_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model, records, output, marker = [root / name for name in ("model.py", "records.json", "app.html", "executed")]
+            records.write_text(json.dumps({"records": [{"id": "one"}]}))
+            output.write_text("preserve existing application")
+            effect = "__import__('pathlib').Path(" + repr(str(marker)) + ").write_text('executed')"
+            valid = "from dataclasses import dataclass\n@dataclass\nclass Note:\n    id: str\n    title: str = 'Literal default'\n"
+            malicious = [valid.replace("'Literal default'", effect),
+                         valid.replace("@dataclass", "@" + effect), valid + effect + "\n"]
+            def cli(*args, expected):
+                result = subprocess.run([sys.executable, "-m", "afterlife", *map(str, args)],
+                                        cwd=ROOT, capture_output=True, text=True, timeout=3)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                self.assertFalse(marker.exists(), "untrusted source or imported dependency executed")
+                return result
+            for source in malicious:
+                model.write_text(source)
+                originals = {p: p.read_bytes() for p in (model, records, output)}
+                report = json.loads(cli("audit-python", model, expected=2).stdout)
+                self.assertFalse(report["source_executed"])
+                self.assertEqual(report["model"]["status"], "unsupported")
+                cli("from-python", model, records, "-o", output, "--force", expected=2)
+                self.assertEqual({p: p.read_bytes() for p in originals}, originals)
+            model.write_text(valid)
+            dependency = root / "imported.py"
+            dependency.write_text(effect + "\n")
+            application = root / "application.py"
+            application.write_text("import imported\n" + effect + "\nwhile True: pass\n")
+            saved = {p: p.read_bytes() for p in (model, dependency, application, records)}
+            report = json.loads(cli("audit-python", model, "--application-source", application, expected=2).stdout)
+            self.assertFalse(report["source_executed"])
+            self.assertEqual(report["model"]["status"], "supported")
+            self.assertEqual([row["source"] for row in report["files"]], [str(model), str(application)])
+            self.assertIn("dependency", [row["code"] for row in report["findings"]])
+            self.assertIn("call-or-side-effect", [row["code"] for row in report["findings"]])
+            cli("from-python", model, records, "-o", output, "--force", expected=0)
+            self.assertIn("Literal default", output.read_text())
+            self.assertEqual({p: p.read_bytes() for p in saved}, saved)
+
     def test_audit_and_compile_protect_sources_and_existing_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "app.html"
