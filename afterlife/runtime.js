@@ -2,6 +2,7 @@
   "use strict";
   const MAX_RECORDS = 10000;
   const MAX_BYTES = 10 * 1024 * 1024;
+  const MAX_INTEGER_INPUT_LENGTH = 10000;
   const PAGE_SIZE = 100;
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -68,6 +69,40 @@
       const compared = x < y ? -1 : x > y ? 1 : 0;
       return (descending ? -compared : compared) || left.index - right.index;
     }).map(item => item.record);
+  }
+
+  function exactIntegerInput(value) {
+    const text = value.trim();
+    if (text.length > MAX_INTEGER_INPUT_LENGTH || !Number.isSafeInteger(Number(text))) return false;
+    const parts = text.match(/^[+-]?(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/);
+    if (!parts || !(parts[1] || parts[2])) return false;
+    const fraction = parts[2] || "";
+    const digits = (parts[1] + fraction).replace(/^0+/, "");
+    if (!digits) return true;
+    // Decimal digits must cancel exactly before Number can round a fraction or
+    // underflow it to zero. Inspect exponents without constructing huge powers.
+    const trailingZeros = digits.length - digits.replace(/0+$/, "").length;
+    return fraction.length - Number(parts[3] || 0) <= trailingZeros;
+  }
+
+  function parseDataJSON(text) {
+    const value = JSON.parse(text); // Syntax remains the platform parser's responsibility.
+    let quoted = false, escaped = false;
+    for (let index = 0; index < text.length; index += 1) {
+      const character = text[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') quoted = false;
+      } else if (character === '"') quoted = true;
+      else if (character === "-" || /[0-9]/.test(character)) {
+        let end = index + 1;
+        while (end < text.length && /[0-9.eE+-]/.test(text[end])) end += 1;
+        if (!exactIntegerInput(text.slice(index, end))) throw new Error("JSON numbers must be exact safe integers.");
+        index = end - 1;
+      }
+    }
+    return value;
   }
 
   function exportCSV(spec, records) {
@@ -221,7 +256,7 @@
       lastStored = localStorage.getItem(payload.storage_key);
       if (lastStored !== null) {
         if (new Blob([lastStored]).size > MAX_BYTES) throw new Error("Saved data is too large.");
-        records = validateEnvelope(payload, JSON.parse(lastStored));
+        records = validateEnvelope(payload, parseDataJSON(lastStored));
       }
     } catch (error) {
       blockedStorage = true;
@@ -660,6 +695,9 @@
       const record = {id: currentId || "r-" + random()};
       for (const field of spec.fields) {
         const input = fieldInputs.get(field.name);
+        if (field.type === "integer" && input.value.trim() !== "" && !exactIntegerInput(input.value)) {
+          return tell(`${field.label} must be an exactly represented safe integer or null.`, true);
+        }
         record[field.name] = field.type === "boolean" ? input.checked : field.type === "integer" ?
           (input.value.trim() === "" ? null : Number(input.value)) : input.value;
         const opened = openedValues.get(field.name);
@@ -679,7 +717,7 @@
       pendingImport = null; importReview.hidden = true;
       try {
         if (file.size > MAX_BYTES) throw new Error("Import exceeds 10 MiB.");
-        const imported = validateEnvelope(payload, JSON.parse(await file.text()));
+        const imported = validateEnvelope(payload, parseDataJSON(await file.text()));
         const differences = compareImport(spec, records, imported);
         const currentIDs = new Set(records.map(row => row.id));
         const incomingIDs = new Set(imported.map(row => row.id));

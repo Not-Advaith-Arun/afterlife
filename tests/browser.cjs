@@ -42,9 +42,27 @@ const {execFileSync} = require("node:child_process");
     await page.getByRole("searchbox").fill("regression");
     assert.equal(await page.locator("tbody tr").count(), 1);
     await page.getByRole("button", {name: "Edit", exact: true}).click();
-    await page.getByLabel("Hours", {exact: true}).fill("8");
-    await page.getByRole("button", {name: "Save record", exact: true}).click();
-    await page.locator("aside.editor").waitFor({state: "hidden"});
+    const numericStorageKey = await page.evaluate(() => JSON.parse(document.querySelector("#afterlife-data").textContent).storage_key);
+    const beforeNumeric = await page.evaluate(key => localStorage.getItem(key), numericStorageKey);
+    for (const inexact of ["1.0000000000000001", "9007199254740991.1", "1e-9999"]) {
+      await page.getByLabel("Hours", {exact: true}).fill(inexact);
+      await page.getByRole("button", {name: "Save record", exact: true}).click();
+      await page.waitForFunction(() => !document.querySelector('aside.editor button[type="submit"]').disabled);
+      assert.equal(await page.locator("aside.editor").isVisible(), true, `Fractional input silently saved: ${inexact}`);
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), numericStorageKey), beforeNumeric);
+    }
+    const exactIntegers = [["-9007199254740991", -9007199254740991], ["9007199254740991.0", 9007199254740991],
+      ["80e-1", 8], ["0e-9999", 0], ["8e0", 8]];
+    for (const [index, [text, expected]] of exactIntegers.entries()) {
+      await page.getByLabel("Hours", {exact: true}).fill(text);
+      await page.getByRole("button", {name: "Save record", exact: true}).click();
+      await page.locator("aside.editor").waitFor({state: "hidden"});
+      const savedHours = await page.evaluate(({key, title}) =>
+        JSON.parse(localStorage.getItem(key)).records.find(record => record.title === title).hours,
+        {key: numericStorageKey, title: attack});
+      assert.equal(savedHours, expected, `Exact integer changed meaning: ${text}`);
+      if (index + 1 < exactIntegers.length) await page.getByRole("button", {name: "Edit", exact: true}).click();
+    }
     assert.ok((await page.locator("tbody").innerText()).includes("8"));
     await page.getByRole("button", {name: "Delete", exact: true}).click();
     await page.getByText("Record deleted. Undo is available until the next import or reload.", {exact: true}).waitFor();
@@ -96,6 +114,19 @@ const {execFileSync} = require("node:child_process");
     await restored.locator("#import-file").setInputFiles(invalid);
     await restored.getByText("Import failed:", {exact: false}).waitFor();
     assert.equal(await restored.locator("tbody tr").count(), 4);
+    const precisionBackup = path.join(directory, "inexact-number.json");
+    const precisionData = JSON.parse(JSON.stringify(exported));
+    precisionData.records[0].hours = 87654321;
+    const restoredStorageKey = await restored.evaluate(() => JSON.parse(document.querySelector("#afterlife-data").textContent).storage_key);
+    const beforePrecisionImport = await restored.evaluate(key => localStorage.getItem(key), restoredStorageKey);
+    for (const rawNumber of ["1.0000000000000001", "9007199254740991.1", "1e-9999"]) {
+      await fs.writeFile(precisionBackup, JSON.stringify(precisionData).replace('"hours":87654321', '"hours":' + rawNumber));
+      await restored.locator("#import-file").setInputFiles(precisionBackup);
+      await restored.getByText("JSON numbers must be exact safe integers.", {exact: false}).waitFor({timeout: 2000});
+      assert.equal(await restored.getByRole("heading", {name: "Review import", exact: true}).isVisible(), false);
+      assert.equal(await restored.locator("tbody tr").count(), 4);
+      assert.equal(await restored.evaluate(key => localStorage.getItem(key), restoredStorageKey), beforePrecisionImport);
+    }
     const editedBackup = path.join(directory, "edited-backup.json");
     const edited = JSON.parse(JSON.stringify(exported));
     edited.records[0].hours += 1;
@@ -232,6 +263,17 @@ const {execFileSync} = require("node:child_process");
       await page.getByRole("searchbox").fill("");
       await page.screenshot({path: process.env.AFTERLIFE_SCREENSHOT, fullPage: true});
     }
+    const precisionContext = await offlineContext(browser, {offline: true});
+    const precisionStored = await precisionContext.newPage();
+    precisionStored.on("pageerror", error => errors.push(error.message));
+    const rawPrecision = JSON.stringify(precisionData).replace('"hours":87654321', '"hours":1.0000000000000001');
+    await precisionStored.addInitScript(({key, raw}) => localStorage.setItem(key, raw),
+      {key: numericStorageKey, raw: rawPrecision});
+    await precisionStored.goto(pathToFileURL(artifact).href);
+    assert.match(await precisionStored.locator("#storage-status").innerText(), /Browser storage is unavailable or invalid\./);
+    assert.equal(await precisionStored.locator("tbody tr").count(), 3);
+    assert.equal(await precisionStored.evaluate(key => localStorage.getItem(key), numericStorageKey), rawPrecision);
+    await precisionContext.close();
     const quotaContext = await offlineContext(browser, {offline: true, acceptDownloads: true});
     const quota = await quotaContext.newPage();
     quota.on("pageerror", error => errors.push(error.message));
