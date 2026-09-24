@@ -269,6 +269,7 @@
     let blockedStorage = false;
     let committing = false;
     let currentPage = 0;
+    let pageSize = PAGE_SIZE;
     let pageCount = 1;
     let storageFailure = "";
     let initialWarning = "";
@@ -511,10 +512,19 @@
     }
     const integerSummary = node("p", "", "integer-summary"); integerSummary.setAttribute("role","status");
     summaryLabel.append(summaryField); summaryField.addEventListener("change", () => render());
+    const pageSizeLabel = node("label","Records per page","sort-label");
+    const pageSizeChoice = node("select"); pageSizeChoice.setAttribute("aria-label","Records per page");
+    for (const size of [25,50,100]) {const option=node("option",String(size));option.value=String(size);pageSizeChoice.append(option);}
+    pageSizeChoice.value=String(pageSize);pageSizeLabel.append(pageSizeChoice);
+    pageSizeChoice.addEventListener("change", () => {
+      const selected=Number(pageSizeChoice.value);
+      if (committing || ![25,50,100].includes(selected)) {pageSizeChoice.value=String(pageSize);return tell("Wait for the current save to finish.",true);}
+      const first=currentPage*pageSize;pageSize=selected;currentPage=Math.floor(first/pageSize);render();
+    });
     const resetView = button("Reset view", () => {
       search.value = ""; searchField.value = ""; searchMode.value = "contains"; search.placeholder = "Search any field…";
       sortField.value = ""; secondaryField.value = ""; secondaryField.disabled = true;
-      descending = false;
+      descending = false; pageSize=PAGE_SIZE; pageSizeChoice.value=String(pageSize);
       sortDirection.textContent = "Ascending";
       sortDirection.setAttribute("aria-pressed", "false");
       sortDirection.disabled = true;
@@ -631,7 +641,7 @@
       bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value;});
       toolbar.append(bulkChoice, bulkUpdate);
     }
-    toolbar.append(resetView, button("Export matching JSON", () => exportMatching("json")),
+    toolbar.append(pageSizeLabel, resetView, button("Export matching JSON", () => exportMatching("json")),
       button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), printMatching, deleteMatching, count, undo, undoFieldUpdate, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
@@ -797,13 +807,13 @@
         const high = values.reduce((current,value) => current === null || value > current ? value : current,null);
         integerSummary.textContent = `${values.length} integer values; ${visible.length-values.length} empty; sum ${sum}; min ${low === null ? "none" : low}; max ${high === null ? "none" : high}. All matching pages; exact integer sum.`;
       }
-      pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+      pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
-      const start = currentPage * PAGE_SIZE;
-      pagination.hidden = visible.length <= PAGE_SIZE;
+      const start = currentPage * pageSize;
+      pagination.hidden = visible.length <= pageSize;
       firstPage.disabled = previousPage.disabled = currentPage === 0;
       nextPage.disabled = lastPage.disabled = currentPage === pageCount - 1;
-      pageStatus.textContent = `Page ${currentPage + 1} of ${pageCount}. Records ${visible.length ? start + 1 : 0}–${Math.min(start + PAGE_SIZE, visible.length)} of ${visible.length}.`;
+      pageStatus.textContent = `Page ${currentPage + 1} of ${pageCount}. Records ${visible.length ? start + 1 : 0}–${Math.min(start + pageSize, visible.length)} of ${visible.length}.`;
       if (focusedPageControl && (pagination.hidden || focusedPageControl.disabled)) {
         (pagination.hidden ? search : currentPage === 0 ? nextPage : previousPage).focus();
       }
@@ -824,7 +834,7 @@
       headings.append(actionsHeading);
       head.append(headings);
       const body = node("tbody");
-      for (const record of visible.slice(start, start + PAGE_SIZE)) {
+      for (const record of visible.slice(start, start + pageSize)) {
         const row = node("tr");
         row.dataset.recordId = record.id;
         for (const field of spec.fields) {
