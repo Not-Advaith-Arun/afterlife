@@ -184,6 +184,44 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual({p: p.read_bytes() for p in before}, before)
 
 
+    def test_compact_backup_review_omits_identifiers_but_retains_full_restore_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def cli(*args,expected=0):
+                result = subprocess.run([sys.executable,"-m","afterlife",*map(str,args)],cwd=ROOT,
+                    capture_output=True,text=True,timeout=10)
+                self.assertEqual(result.returncode,expected,result.stdout+result.stderr)
+                return result
+            spec = ROOT / "examples/task-tracker/app.json"
+            app,current,incoming,full,compact,restored = [root / name for name in ("app.html","current.json","incoming.json","full.json","compact.json","restored.html")]
+            cli(spec,ROOT / "examples/task-tracker/records.json","-o",app)
+            payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>',app.read_text(),re.S)[1])
+            envelope = {"format":"afterlife-data/v1","app_id":payload["spec"]["app_id"],
+                        "spec_fingerprint":payload["spec_fingerprint"],"records":payload["records"]}
+            current.write_text(json.dumps(envelope))
+            envelope["records"][0]["title"] = "Private changed value"
+            envelope["records"].append({**envelope["records"][0],"id":"private-added-record"})
+            incoming.write_text(json.dumps(envelope))
+            inputs = {p:p.read_bytes() for p in (spec,current,incoming)}
+            args = ("review-export",spec,incoming,"--against",current)
+            raw = cli(*args,"--summary","--check","--output",full,expected=1).stdout
+            summary,complete = json.loads(raw),json.loads(full.read_text())
+            self.assertEqual(summary["format"],"afterlife-export-review-summary/v1")
+            self.assertEqual(summary["counts"],complete["counts"])
+            self.assertFalse(summary["identical_normalized_records"])
+            self.assertEqual(summary["incoming_records_sha256"],complete["incoming_records_sha256"])
+            self.assertEqual(full.read_text(),cli(*args).stdout)
+            for value in ("private-added-record","Private changed value",'"fields"','"added": ['):
+                self.assertNotIn(value,raw)
+            compact.write_text(raw); restored.write_text("Keep prior application")
+            cli("from-export",spec,incoming,"--against",current,"--review",compact,"-o",restored,"--force",expected=2)
+            self.assertEqual(restored.read_text(),"Keep prior application")
+            cli("from-export",spec,incoming,"--against",current,"--review",full,"-o",restored,"--force")
+            self.assertIn("Private changed value",restored.read_text())
+            equal = json.loads(cli("review-export",spec,current,"--against",current,"--summary","--check").stdout)
+            self.assertTrue(equal["identical_normalized_records"])
+            self.assertEqual({p:p.read_bytes() for p in inputs},inputs)
+
     def test_saved_backup_review_drives_guarded_restore_and_preserves_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

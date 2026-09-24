@@ -34,3 +34,11 @@ def review_export(spec, current, incoming):
             "scope": "Read-only normalized backup comparison. IDs and changed field names only; record values excluded. "
                      "Order-only differences are not record edits. Snapshot hashes bind exact normalized array order. "
                      "No restoration, generated HTML or lock on a later rebuild; inspect stable backups before from-export."}
+
+
+def review_summary(report):
+    """Compact triage view; deliberately not a guarded-restore review document."""
+    return {"format": "afterlife-export-review-summary/v1",
+            **{key:report[key] for key in ("app_id","spec_fingerprint","current_records_sha256","incoming_records_sha256","counts")},
+            "identical_normalized_records": report["current_records_sha256"] == report["incoming_records_sha256"],
+            "scope": "Full normalized comparison performed; compact counts and snapshot hashes only. Record IDs, changed field names and values omitted; app ID and hashes may still be sensitive. Array order affects identity. This summary is not a from-export --review guard: use --output to retain the complete review for restoration. No authenticity or later-source lock established."}

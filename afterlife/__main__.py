@@ -104,7 +104,8 @@ def review_export_main(argv):
     parser.add_argument("spec", type=Path)
     parser.add_argument("backup", type=Path)
     parser.add_argument("--against", type=Path, required=True, help="Current matching JSON backup")
-    parser.add_argument("-o", "--output", type=Path, help="Atomically save a review for from-export --review, instead of stdout")
+    parser.add_argument("--summary", action="store_true", help="Show counts/hashes without record IDs or field names; --output still saves the complete restore guard")
+    parser.add_argument("-o", "--output", type=Path, help="Atomically save the complete review for from-export --review")
     parser.add_argument("--force", action="store_true", help="Replace an existing saved review")
     parser.add_argument("--check", action="store_true", help="Exit 1 when normalized records or their array order differ; 2 for invalid input")
     args = parser.parse_args(argv)
@@ -123,6 +124,10 @@ def review_export_main(argv):
         serialized = json.dumps(result, indent=2, ensure_ascii=True) + "\n"
         if args.output:
             write_output(args.output, serialized, force=args.force)
+        if args.summary:
+            from .transfers import review_summary
+            print(json.dumps(review_summary(result), indent=2, ensure_ascii=True))
+        elif args.output:
             print(f"Saved backup review → {args.output}")
         else:
             print(serialized, end="")
