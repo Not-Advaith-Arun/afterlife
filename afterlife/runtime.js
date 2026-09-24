@@ -56,19 +56,21 @@
     return normalizeRecords(spec, records);
   }
 
-  function sortRecords(spec, records, fieldName, descending = false) {
+  function sortRecords(spec, records, fieldName, descending = false, secondaryName = "") {
     if (!fieldName) return [...records];
-    const field = spec.fields.find(item => item.name === fieldName);
-    if (!field) throw new Error("Choose a declared field to sort records.");
-    return records.map((record, index) => ({record, index})).sort((left, right) => {
-      const a = left.record[fieldName], b = right.record[fieldName];
+    if (![fieldName, ...(secondaryName ? [secondaryName] : [])].every(name => spec.fields.some(field => field.name === name))) throw new Error("Choose declared fields to sort records.");
+    const compareValue = (a,b,reverse) => {
       const absentA = a === null || a === "", absentB = b === null || b === "";
       if (absentA !== absentB) return absentA ? 1 : -1;
       const x = typeof a === "string" ? a.toLowerCase() : a;
       const y = typeof b === "string" ? b.toLowerCase() : b;
       const compared = x < y ? -1 : x > y ? 1 : 0;
-      return (descending ? -compared : compared) || left.index - right.index;
-    }).map(item => item.record);
+      return reverse ? -compared : compared;
+    };
+    return records.map((record,index) => ({record,index})).sort((left,right) =>
+      compareValue(left.record[fieldName],right.record[fieldName],descending) ||
+      (secondaryName ? compareValue(left.record[secondaryName],right.record[secondaryName],false) : 0) ||
+      left.index-right.index).map(item => item.record);
   }
 
   function exactIntegerInput(value) {
@@ -405,10 +407,16 @@
     sortDirection.setAttribute("aria-pressed", "false");
     sortDirection.disabled = true;
     sortField.addEventListener("change", () => {
-      sortDirection.disabled = !sortField.value;
+      sortDirection.disabled = !sortField.value; secondaryField.disabled = !sortField.value;
       currentPage = 0;
       render();
     });
+    const secondaryLabel = node("label", "Then by (ascending)", "sort-label");
+    const secondaryField = node("select"); secondaryField.setAttribute("aria-label","Secondary sort field");
+    const noSecondary = node("option","Original order for ties"); noSecondary.value = ""; secondaryField.append(noSecondary);
+    for (const field of spec.fields) {const option = node("option",field.label); option.value = field.name; secondaryField.append(option);}
+    secondaryField.disabled = true; secondaryLabel.append(secondaryField);
+    secondaryField.addEventListener("change", () => {currentPage=0; render();});
     const filterFields = spec.fields.filter(field => ["boolean", "select"].includes(field.type));
     const filterLabel = node("label", "Filter by", "sort-label");
     const filterField = node("select");
@@ -505,7 +513,7 @@
     summaryLabel.append(summaryField); summaryField.addEventListener("change", () => render());
     const resetView = button("Reset view", () => {
       search.value = ""; searchField.value = ""; searchMode.value = "contains"; search.placeholder = "Search any field…";
-      sortField.value = "";
+      sortField.value = ""; secondaryField.value = ""; secondaryField.disabled = true;
       descending = false;
       sortDirection.textContent = "Ascending";
       sortDirection.setAttribute("aria-pressed", "false");
@@ -551,7 +559,7 @@
       }
     });
     undoFieldUpdate.hidden = true;
-    toolbar.append(searchLabel, searchFieldLabel, searchModeLabel, sortLabel, sortDirection);
+    toolbar.append(searchLabel, searchFieldLabel, searchModeLabel, sortLabel, sortDirection, secondaryLabel);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
     if (integerFields.length) toolbar.append(rangeControls,summaryLabel,integerSummary);
     toolbar.append(presenceLabel);
@@ -773,7 +781,7 @@
         (!presenceField.value || ((record[presenceField.value] === null || record[presenceField.value] === "") === (presenceValue.value === "empty"))) &&
         (!activeRange || record[activeRange.name] !== null &&
           (activeRange.low === null || record[activeRange.name] >= activeRange.low) &&
-          (activeRange.high === null || record[activeRange.name] <= activeRange.high))), sortField.value, descending);
+          (activeRange.high === null || record[activeRange.name] <= activeRange.high))), sortField.value, descending, secondaryField.value);
     }
 
     function render() {
