@@ -260,6 +260,7 @@
     let records = validateRecords(spec, payload.records);
     let currentId = null;
     let lastDeleted = null;
+    let lastFieldUpdate = null;
     let dirty = false;
     let stale = false;
     let lastStored = null;
@@ -529,6 +530,19 @@
       if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell(entries.length === 1 ? "Deleted record restored." : "Deleted records restored."); }
     });
     undo.hidden = true;
+    const undoFieldUpdate = button("Undo field update", async () => {
+      if (!lastFieldUpdate || committing) return;
+      if (dirty) return tell("Save or cancel editor changes before undoing the field update.", true);
+      if (JSON.stringify(records) !== lastFieldUpdate.after) {
+        lastFieldUpdate = null; undoFieldUpdate.hidden = true;
+        return tell("Records changed after the field update. Undo refused; current records kept.", true);
+      }
+      if (await commit(lastFieldUpdate.before, {resetPage:true})) {
+        lastFieldUpdate = null; undoFieldUpdate.hidden = true; panel.hidden = true; currentId = null;
+        tell("Matching field update undone. Previous record values restored.");
+      }
+    });
+    undoFieldUpdate.hidden = true;
     toolbar.append(searchLabel, searchFieldLabel, searchModeLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
     if (integerFields.length) toolbar.append(rangeControls);
@@ -588,9 +602,11 @@
         const display = field.type === "boolean" ? (value ? "Yes" : "No") : value || "No value";
         const ids = new Set(currentView().filter(record => record[name] !== value).map(record => record.id));
         if (!ids.size) return tell("No matching records need this field change. Current records kept.");
-        if (!confirm(`Set ${field.label} to ${display} for ${ids.size} matching records, including other pages? Export a copy first; this update has no undo.`)) return;
+        if (!confirm(`Set ${field.label} to ${display} for ${ids.size} matching records, including other pages? You can undo this field update until another record change, import or reload.`)) return;
+        const beforeUpdate = records.map(record => ({...record}));
         const next = records.map(record => ids.has(record.id) ? {...record, [name]: value} : record);
         if (await commit(next, {resetPage: true})) {
+          lastFieldUpdate = {before:beforeUpdate, after:JSON.stringify(records)}; undoFieldUpdate.hidden = false;
           panel.hidden = true; currentId = null;
           tell(`Updated ${ids.size} matching records: ${field.label} set to ${display}.`);
         }
@@ -600,7 +616,7 @@
       toolbar.append(bulkChoice, bulkUpdate);
     }
     toolbar.append(resetView, button("Export matching JSON", () => exportMatching("json")),
-      button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), printMatching, deleteMatching, count, undo, separateCopy, newButton);
+      button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), printMatching, deleteMatching, count, undo, undoFieldUpdate, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -640,7 +656,7 @@
       if (addOnly && !added.length) return tell("No new record IDs to add. Current records kept.");
       const incoming = addOnly ? [...records, ...added] : pendingImport.records;
       if (await commit(incoming, {resetPage: true})) {
-        lastDeleted = null; undo.hidden = true; dirty = false; panel.hidden = true; currentId = null;
+        lastDeleted = null; undo.hidden = true; lastFieldUpdate = null; undoFieldUpdate.hidden = true; dirty = false; panel.hidden = true; currentId = null;
         pendingImport = null; importReview.hidden = true;
         tell(addOnly ? `Added ${added.length} new records. Existing records kept.` : `Imported ${incoming.length} records.`);
       }

@@ -14,7 +14,7 @@ const {execFileSync}=require("node:child_process"),{pathToFileURL}=require("node
   await page.locator("#filter-field").selectOption("archived");await page.locator("#filter-value").selectOption("true");
   const choice=page.getByRole("combobox",{name:"Matching field value",exact:true}),update=page.getByRole("button",{name:"Update matching records",exact:true});
   assert.equal(await update.isDisabled(),true);await choice.selectOption(JSON.stringify(["archived",false]));
-  page.once("dialog",d=>{assert.match(d.message(),/103 matching records/);assert.match(d.message(),/no undo/);return d.dismiss();});
+  page.once("dialog",d=>{assert.match(d.message(),/103 matching records/);assert.match(d.message(),/undo this field update/);return d.dismiss();});
   await update.click();assert.equal(await stored(),null);
   await page.locator('tr[data-record-id="note-0"]').getByRole("button",{name:"Edit",exact:true}).click();await page.locator("#field-title").fill("Unsaved draft");
   await update.click();assert.match(await page.locator("#message").textContent(),/Save or cancel editor/);assert.equal(await stored(),null);
