@@ -42,3 +42,21 @@ def review_summary(report):
             **{key:report[key] for key in ("app_id","spec_fingerprint","current_records_sha256","incoming_records_sha256","counts")},
             "identical_normalized_records": report["current_records_sha256"] == report["incoming_records_sha256"],
             "scope": "Full normalized comparison performed; compact counts and snapshot hashes only. Record IDs, changed field names and values omitted; app ID and hashes may still be sensitive. Array order affects identity. This summary is not a from-export --review guard: use --output to retain the complete review for restoration. No authenticity or later-source lock established."}
+
+
+def select_review_changes(report, record_ids):
+    """Inspect a chosen change set while retaining whole-backup identity."""
+    selected = set(record_ids)
+    changed = {row["id"] for row in report["changed"]}
+    known = set(report["added"]) | set(report["removed"]) | changed
+    if not 1 <= len(record_ids) <= 1000 or len(selected) != len(record_ids) or not selected <= known:
+        raise CompileError("Select 1..1000 distinct record IDs with an added, removed or changed entry in this comparison")
+    added = [key for key in report["added"] if key in selected]
+    removed = [key for key in report["removed"] if key in selected]
+    edits = [row for row in report["changed"] if row["id"] in selected]
+    return {"format":"afterlife-export-review-selection/v1",
+            **{key:report[key] for key in ("app_id","spec_fingerprint","current_records_sha256","incoming_records_sha256","counts")},
+            "selected_record_ids":sorted(selected), "added":added, "removed":removed, "changed":edits,
+            "selected_counts":{"added":len(added),"removed":len(removed),"changed":len(edits)},
+            "omitted_change_records":len(known)-len(selected),
+            "scope":"Selected change entries only; unchanged or unknown IDs cannot be selected. Counts and snapshot hashes still cover both complete normalized backups. Record values excluded. Full comparison cost remains. This selection is not a from-export --review guard; use --output to save the complete restoration review."}

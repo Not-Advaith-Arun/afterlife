@@ -104,7 +104,9 @@ def review_export_main(argv):
     parser.add_argument("spec", type=Path)
     parser.add_argument("backup", type=Path)
     parser.add_argument("--against", type=Path, required=True, help="Current matching JSON backup")
-    parser.add_argument("--summary", action="store_true", help="Show counts/hashes without record IDs or field names; --output still saves the complete restore guard")
+    view = parser.add_mutually_exclusive_group()
+    view.add_argument("--summary", action="store_true", help="Show counts/hashes without record IDs or field names; --output still saves the complete restore guard")
+    view.add_argument("--record-id", action="append", help="Focus on an added, removed or changed record ID; repeat for multiple IDs. --output still saves the complete restore guard")
     parser.add_argument("-o", "--output", type=Path, help="Atomically save the complete review for from-export --review")
     parser.add_argument("--force", action="store_true", help="Replace an existing saved review")
     parser.add_argument("--check", action="store_true", help="Exit 1 when normalized records or their array order differ; 2 for invalid input")
@@ -121,10 +123,16 @@ def review_export_main(argv):
                 raise CompileError("Review output directory does not exist")
         from .transfers import review_export
         result = review_export(load_json(args.spec), load_json(args.against), load_json(args.backup))
+        displayed = None
+        if args.record_id:
+            from .transfers import select_review_changes
+            displayed = select_review_changes(result, args.record_id)
         serialized = json.dumps(result, indent=2, ensure_ascii=True) + "\n"
         if args.output:
             write_output(args.output, serialized, force=args.force)
-        if args.summary:
+        if displayed is not None:
+            print(json.dumps(displayed, indent=2, ensure_ascii=True))
+        elif args.summary:
             from .transfers import review_summary
             print(json.dumps(review_summary(result), indent=2, ensure_ascii=True))
         elif args.output:
