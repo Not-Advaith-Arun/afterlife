@@ -19,6 +19,8 @@ def _same_file(first, second):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "verify-build":
+        return verify_build_main(argv[1:])
     if argv and argv[0] == "verify-artifact":
         return verify_artifact_main(argv[1:])
     if argv and argv[0] == "audit-python":
@@ -187,6 +189,21 @@ def audit_main(argv):
         print(f"afterlife: {error}", file=sys.stderr)
         return 2
 
+
+def verify_build_main(argv):
+    parser = argparse.ArgumentParser(description="Verify retained HTML against a rebuild from supplied declarative inputs with the installed compiler; no files written")
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("data", type=Path)
+    parser.add_argument("artifact", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        from .verification import verify_build
+        result = verify_build(args.spec, args.data, args.artifact)
+        print(json.dumps(result, indent=2))
+        return 0 if result["matched"] else 1
+    except (CompileError, OSError, ValueError, UnicodeError, RecursionError) as error:
+        print(f"afterlife: {error}", file=sys.stderr)
+        return 2
 
 if __name__ == "__main__":
     raise SystemExit(main())
