@@ -491,20 +491,28 @@
     const cancelImport = button("Cancel import", () => {
       pendingImport = null; importReview.hidden = true; tell("Import cancelled. Current records kept.");
     });
-    const applyImport = button("Apply import", async () => {
+    async function applyPendingImport(addOnly = false) {
       if (!pendingImport) return;
       if (JSON.stringify(records) !== pendingImport.baseline) {
         pendingImport = null; importReview.hidden = true;
         return tell("Records changed after this preview. Choose the import file again to review current differences.", true);
       }
       if (dirty && !confirm("Discard unsaved editor changes and import?")) return;
-      const incoming = pendingImport.records;
+      if (addOnly && pendingImport.review.counts.changed) {
+        return tell("Cannot add records: existing IDs have different values. Review the conflicting IDs or choose replacement import explicitly.", true);
+      }
+      const existingIDs = new Set(records.map(record => record.id));
+      const added = pendingImport.records.filter(record => !existingIDs.has(record.id));
+      if (addOnly && !added.length) return tell("No new record IDs to add. Current records kept.");
+      const incoming = addOnly ? [...records, ...added] : pendingImport.records;
       if (await commit(incoming, {resetPage: true})) {
         lastDeleted = null; undo.hidden = true; dirty = false; panel.hidden = true; currentId = null;
         pendingImport = null; importReview.hidden = true;
-        tell(`Imported ${incoming.length} records.`);
+        tell(addOnly ? `Added ${added.length} new records. Existing records kept.` : `Imported ${incoming.length} records.`);
       }
-    }, "primary");
+    }
+    const applyImport = button("Apply import", () => applyPendingImport(false), "primary");
+    const addImport = button("Add new records", () => applyPendingImport(true));
     const exportImportReview = button("Export review JSON", () => {
       if (!pendingImport || committing) return;
       if (stale || JSON.stringify(records) !== pendingImport.baseline) {
@@ -513,7 +521,7 @@
       download(JSON.stringify(pendingImport.review, null, 2), spec.app_id + "-import-review.json", "application/json");
       tell("Review summary download requested. Record values are excluded; export data separately to keep a backup.");
     });
-    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, exportImportReview, cancelImport);
+    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, addImport, exportImportReview, cancelImport);
     const layout = node("div", undefined, "workspace");
     const list = node("section", undefined, "records");
     list.id = "records";
@@ -766,6 +774,10 @@
           added: differences.added, removed: differences.removed, changed_fields: changedFields,
           retained_order_changed: reordered,
           scope: "Metadata-only draft preview. IDs and field names included; record values excluded. This is not a data backup, authenticated snapshot, or guarded-restoration report. Separate requests may observe different records; review again before applying."};
+        addImport.disabled = differences.changed.length > 0 || differences.added.length === 0;
+        importSummary.append(node("span", differences.changed.length ?
+          ` Add mode unavailable: ${differences.changed.length} existing IDs have different values.` :
+          ` Add mode keeps all current records and adds ${differences.added.length} new IDs; unchanged shared IDs are skipped.`));
         importReview.hidden = false;
         applyImport.focus();
         tell("Import preview ready. Current records have not changed.");
