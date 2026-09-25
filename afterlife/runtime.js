@@ -466,6 +466,36 @@
         tell(`Deleted ${entries.length} matching records. Undo is available until the next import or reload.`);
       }
     }, "danger");
+    const booleanFields = spec.fields.filter(field => field.type === "boolean");
+    if (booleanFields.length) {
+      const bulkChoice = node("select");
+      bulkChoice.setAttribute("aria-label", "Matching checkbox value");
+      const placeholder = node("option", "Choose checkbox update…"); placeholder.value = ""; bulkChoice.append(placeholder);
+      for (const field of booleanFields) {
+        for (const value of [true, false]) {
+          const option = node("option", `Set ${field.label} to ${value ? "Yes" : "No"}`);
+          option.value = JSON.stringify([field.name, value]); bulkChoice.append(option);
+        }
+      }
+      const bulkUpdate = button("Update matching records", async () => {
+        if (committing) return tell("Wait for the current save to finish.", true);
+        if (dirty) return tell("Save or cancel editor changes before updating matching records.", true);
+        if (!bulkChoice.value) return;
+        const [name, value] = JSON.parse(bulkChoice.value);
+        const field = booleanFields.find(item => item.name === name);
+        const ids = new Set(currentView().filter(record => record[name] !== value).map(record => record.id));
+        if (!ids.size) return tell("No matching records need this checkbox change. Current records kept.");
+        if (!confirm(`Set ${field.label} to ${value ? "Yes" : "No"} for ${ids.size} matching records, including other pages? Export a copy first; this update has no undo.`)) return;
+        const next = records.map(record => ids.has(record.id) ? {...record, [name]: value} : record);
+        if (await commit(next, {resetPage: true})) {
+          panel.hidden = true; currentId = null;
+          tell(`Updated ${ids.size} matching records: ${field.label} set to ${value ? "Yes" : "No"}.`);
+        }
+      });
+      bulkUpdate.disabled = true;
+      bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value;});
+      toolbar.append(bulkChoice, bulkUpdate);
+    }
     toolbar.append(resetView, button("Export matching JSON", () => exportMatching("json")),
       button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), deleteMatching, count, undo, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
