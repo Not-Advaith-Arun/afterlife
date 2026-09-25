@@ -302,22 +302,23 @@
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     };
-    const saveHTML = () => {
+    const saveHTML = (matching = false) => {
       if (committing) return tell("Wait for the current save to finish before downloading.", true);
+      const selected = matching ? currentView() : records;
       const copy = document.documentElement.cloneNode(true);
       copy.querySelector("#app").replaceChildren();
       const suffix = [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
-      copy.querySelector("#afterlife-data").textContent = escapeJSON({...payload, records,
+      copy.querySelector("#afterlife-data").textContent = escapeJSON({...payload, records: selected,
         storage_key: `afterlife:v1:${spec.app_id}:snapshot:${suffix}`});
-      download("<!doctype html>\n" + copy.outerHTML + "\n", spec.app_id + "-offline.html", "text/html;charset=utf-8");
-      tell("Download requested. Open the downloaded HTML file to verify your saved copy.");
+      download("<!doctype html>\n" + copy.outerHTML + "\n", spec.app_id + (matching ? "-matching-offline.html" : "-offline.html"), "text/html;charset=utf-8");
+      tell(matching ? `Download requested for all ${selected.length} matching records in view order, including other pages. App settings retained; full collection kept here. Open the downloaded HTML to verify your copy.` : "Download requested. Open the downloaded HTML file to verify your saved copy.");
     };
     const fileInput = node("input");
     fileInput.type = "file";
     fileInput.accept = ".json,application/json";
     fileInput.id = "import-file";
     fileInput.hidden = true;
-    fileActions.append(button("Download app", saveHTML, "primary"),
+    fileActions.append(button("Download app", () => saveHTML(), "primary"),
       button("Export JSON", () => {
         if (committing) return tell("Wait for the current save to finish before downloading.", true);
         try {
@@ -466,7 +467,7 @@
       }
     }, "danger");
     toolbar.append(resetView, button("Export matching JSON", () => exportMatching("json")),
-      button("Export matching CSV", () => exportMatching("csv")), deleteMatching, count, undo, separateCopy, newButton);
+      button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), deleteMatching, count, undo, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
