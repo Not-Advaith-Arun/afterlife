@@ -406,6 +406,41 @@
     const viewChanged = () => { currentPage = 0; render(); };
     filterField.addEventListener("change", () => { refreshFilterValues(); viewChanged(); });
     filterValue.addEventListener("change", viewChanged);
+    const integerFields = spec.fields.filter(field => field.type === "integer");
+    const rangeControls = node("div", undefined, "sort-label");
+    const rangeField = node("select"); rangeField.setAttribute("aria-label", "Integer range field");
+    const rangeNone = node("option", "No integer range"); rangeNone.value = ""; rangeField.append(rangeNone);
+    for (const field of integerFields) {
+      const option = node("option", field.label); option.value = field.name; rangeField.append(option);
+    }
+    const minimum = node("input"), maximum = node("input");
+    for (const [input, label] of [[minimum, "Minimum integer"], [maximum, "Maximum integer"]]) {
+      input.type = "text"; input.inputMode = "numeric"; input.maxLength = MAX_INTEGER_INPUT_LENGTH;
+      input.setAttribute("aria-label", label); input.placeholder = label; input.disabled = true;
+    }
+    let activeRange = null;
+    const applyRange = button("Apply integer range", () => {
+      if (!rangeField.value) return;
+      const bound = input => {
+        if (!input.value.trim()) return null;
+        if (!exactIntegerInput(input.value)) throw new Error("Use exact safe integer bounds.");
+        return Number(input.value.trim());
+      };
+      try {
+        const low = bound(minimum), high = bound(maximum);
+        if (low !== null && high !== null && low > high) throw new Error("Minimum must not exceed maximum.");
+        activeRange = low === null && high === null ? null : {name: rangeField.value, low, high};
+        viewChanged();
+        tell(activeRange ? "Inclusive integer range applied. Empty values are excluded; all matching pages and exports use this range." : "Integer range cleared. Empty values are included again.");
+      } catch (error) { tell("Range not applied: " + error.message + " Previous range kept.", true); }
+    });
+    applyRange.disabled = true;
+    const clearRange = () => {
+      activeRange = null; minimum.value = maximum.value = "";
+      minimum.disabled = maximum.disabled = applyRange.disabled = !rangeField.value;
+    };
+    rangeField.addEventListener("change", () => {clearRange(); viewChanged();});
+    rangeControls.append(rangeField, minimum, maximum, applyRange);
     const resetView = button("Reset view", () => {
       search.value = "";
       sortField.value = "";
@@ -414,6 +449,7 @@
       sortDirection.setAttribute("aria-pressed", "false");
       sortDirection.disabled = true;
       filterField.value = "";
+      rangeField.value = ""; clearRange();
       refreshFilterValues();
       viewChanged();
     });
@@ -441,6 +477,7 @@
     undo.hidden = true;
     toolbar.append(searchLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
+    if (integerFields.length) toolbar.append(rangeControls);
     const exportMatching = (format) => {
       if (committing) return tell("Wait for the current save to finish before downloading.", true);
       try {
@@ -642,7 +679,10 @@
 
     function currentView() {
       return sortRecords(spec, records.filter(record => matches(spec, record, search.value) &&
-        (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value))), sortField.value, descending);
+        (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value)) &&
+        (!activeRange || record[activeRange.name] !== null &&
+          (activeRange.low === null || record[activeRange.name] >= activeRange.low) &&
+          (activeRange.high === null || record[activeRange.name] <= activeRange.high))), sortField.value, descending);
     }
 
     function render() {
