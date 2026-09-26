@@ -12,7 +12,7 @@ const {execFileSync}=require("node:child_process"),{pathToFileURL}=require("node
   await context.addInitScript(()=>{const add=window.addEventListener.bind(window);window.pendingStorage=[];window.addEventListener=(type,listener,options)=>add(type,type==="storage"?event=>window.pendingStorage.push({listener,event}):listener,options);});
   const open=async()=>{const p=await context.newPage();p.on("pageerror",e=>errors.push(e.message));p.on("request",r=>{if(/^https?:/.test(r.url()))network.push(r.url());});await p.goto(pathToFileURL(artifact).href);return p;};
   const actor=await open(),writer=await open(),holder=await open(),payload=await actor.evaluate(()=>JSON.parse(document.querySelector("#afterlife-data").textContent)),key=payload.storage_key;
-  await actor.getByRole("combobox",{name:"Matching checkbox value",exact:true}).selectOption(JSON.stringify(["archived",true]));
+  await actor.getByRole("combobox",{name:"Matching field value",exact:true}).selectOption(JSON.stringify(["archived",true]));
   await holder.evaluate(key=>{window.holdReady=false;window.holdDone=navigator.locks.request("afterlife-write:"+key,async()=>{window.holdReady=true;await new Promise(resolve=>window.releaseHold=resolve);});},key);
   await holder.waitForFunction(()=>window.holdReady);
   actor.once("dialog",d=>d.accept());await actor.getByRole("button",{name:"Update matching records",exact:true}).click();

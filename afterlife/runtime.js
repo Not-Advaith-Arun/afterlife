@@ -515,14 +515,16 @@
         tell(`Deleted ${entries.length} matching records. Undo is available until the next import or reload.`);
       }
     }, "danger");
-    const booleanFields = spec.fields.filter(field => field.type === "boolean");
-    if (booleanFields.length) {
+    const bulkFields = spec.fields.filter(field => ["boolean", "select"].includes(field.type));
+    if (bulkFields.length) {
       const bulkChoice = node("select");
-      bulkChoice.setAttribute("aria-label", "Matching checkbox value");
-      const placeholder = node("option", "Choose checkbox update…"); placeholder.value = ""; bulkChoice.append(placeholder);
-      for (const field of booleanFields) {
-        for (const value of [true, false]) {
-          const option = node("option", `Set ${field.label} to ${value ? "Yes" : "No"}`);
+      bulkChoice.setAttribute("aria-label", "Matching field value");
+      const placeholder = node("option", "Choose field update…"); placeholder.value = ""; bulkChoice.append(placeholder);
+      for (const field of bulkFields) {
+        const values = field.type === "boolean" ? [true, false] : [...(field.required ? [] : [""]), ...field.options];
+        for (const value of values) {
+          const display = field.type === "boolean" ? (value ? "Yes" : "No") : value || "No value";
+          const option = node("option", `Set ${field.label} to ${display}`);
           option.value = JSON.stringify([field.name, value]); bulkChoice.append(option);
         }
       }
@@ -531,14 +533,15 @@
         if (dirty) return tell("Save or cancel editor changes before updating matching records.", true);
         if (!bulkChoice.value) return;
         const [name, value] = JSON.parse(bulkChoice.value);
-        const field = booleanFields.find(item => item.name === name);
+        const field = bulkFields.find(item => item.name === name);
+        const display = field.type === "boolean" ? (value ? "Yes" : "No") : value || "No value";
         const ids = new Set(currentView().filter(record => record[name] !== value).map(record => record.id));
-        if (!ids.size) return tell("No matching records need this checkbox change. Current records kept.");
-        if (!confirm(`Set ${field.label} to ${value ? "Yes" : "No"} for ${ids.size} matching records, including other pages? Export a copy first; this update has no undo.`)) return;
+        if (!ids.size) return tell("No matching records need this field change. Current records kept.");
+        if (!confirm(`Set ${field.label} to ${display} for ${ids.size} matching records, including other pages? Export a copy first; this update has no undo.`)) return;
         const next = records.map(record => ids.has(record.id) ? {...record, [name]: value} : record);
         if (await commit(next, {resetPage: true})) {
           panel.hidden = true; currentId = null;
-          tell(`Updated ${ids.size} matching records: ${field.label} set to ${value ? "Yes" : "No"}.`);
+          tell(`Updated ${ids.size} matching records: ${field.label} set to ${display}.`);
         }
       });
       bulkUpdate.disabled = true;

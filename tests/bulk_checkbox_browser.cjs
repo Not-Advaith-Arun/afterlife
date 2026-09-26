@@ -12,7 +12,7 @@ const {execFileSync}=require("node:child_process"),{pathToFileURL}=require("node
   const page=await open(),payload=await page.evaluate(()=>JSON.parse(document.querySelector("#afterlife-data").textContent)),key=payload.storage_key;
   const stored=()=>page.evaluate(key=>localStorage.getItem(key),key);
   await page.locator("#filter-field").selectOption("archived");await page.locator("#filter-value").selectOption("true");
-  const choice=page.getByRole("combobox",{name:"Matching checkbox value",exact:true}),update=page.getByRole("button",{name:"Update matching records",exact:true});
+  const choice=page.getByRole("combobox",{name:"Matching field value",exact:true}),update=page.getByRole("button",{name:"Update matching records",exact:true});
   assert.equal(await update.isDisabled(),true);await choice.selectOption(JSON.stringify(["archived",false]));
   page.once("dialog",d=>{assert.match(d.message(),/103 matching records/);assert.match(d.message(),/no undo/);return d.dismiss();});
   await update.click();assert.equal(await stored(),null);
@@ -29,7 +29,7 @@ const {execFileSync}=require("node:child_process"),{pathToFileURL}=require("node
   const writer=await open();await writer.getByRole("button",{name:"New note",exact:true}).click();await writer.locator("#field-title").fill("Newer writer record");
   await writer.getByRole("button",{name:"Save record",exact:true}).click();await writer.locator("aside.editor").waitFor({state:"hidden"});
   const winning=await stored();await page.getByText("Another tab changed this app.",{exact:false}).waitFor();
-  await page.getByRole("combobox",{name:"Matching checkbox value",exact:true}).selectOption(JSON.stringify(["archived",true]));
+  await page.getByRole("combobox",{name:"Matching field value",exact:true}).selectOption(JSON.stringify(["archived",true]));
   page.once("dialog",d=>d.accept());await page.getByRole("button",{name:"Update matching records",exact:true}).click();
   assert.equal(await stored(),winning);assert.deepEqual(await fs.readFile(artifact),original);assert.deepEqual(errors,[]);assert.deepEqual(network,[]);
   await context.close();console.log("Bulk checkbox:103 all-page updates, cancel/draft/clean-editor/no-op/reload/stale-tab preservation passed offline.");
