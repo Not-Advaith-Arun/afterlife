@@ -201,9 +201,9 @@
       .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   }
 
-  function matches(spec, record, query) {
+  function matches(spec, record, query, fieldName = "") {
     const needle = query.trim().toLocaleLowerCase();
-    return !needle || spec.fields.some(field => String(record[field.name] ?? "").toLocaleLowerCase().includes(needle));
+    return !needle || spec.fields.some(field => (!fieldName || field.name === fieldName) && String(record[field.name] ?? "").toLocaleLowerCase().includes(needle));
   }
 
   function exportDataJSON(value) {
@@ -341,6 +341,18 @@
     search.type = "search";
     search.placeholder = "Search any field…";
     searchLabel.append(search);
+    const searchFieldLabel = node("label", "Search in", "sort-label");
+    const searchField = node("select"); searchField.id = "search-field";
+    const searchEverywhere = node("option", "All fields"); searchEverywhere.value = ""; searchField.append(searchEverywhere);
+    for (const field of spec.fields) {
+      const option = node("option", field.label); option.value = field.name; searchField.append(option);
+    }
+    searchFieldLabel.append(searchField);
+    searchField.addEventListener("change", () => {
+      const field = spec.fields.find(item => item.name === searchField.value);
+      search.placeholder = field ? `Search ${field.label}…` : "Search any field…";
+      currentPage = 0; render();
+    });
     const sortLabel = node("label", "Sort records", "sort-label");
     const sortField = node("select");
     sortField.id = "sort-field";
@@ -442,7 +454,7 @@
     rangeField.addEventListener("change", () => {clearRange(); viewChanged();});
     rangeControls.append(rangeField, minimum, maximum, applyRange);
     const resetView = button("Reset view", () => {
-      search.value = "";
+      search.value = ""; searchField.value = ""; search.placeholder = "Search any field…";
       sortField.value = "";
       descending = false;
       sortDirection.textContent = "Ascending";
@@ -475,7 +487,7 @@
       if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell(entries.length === 1 ? "Deleted record restored." : "Deleted records restored."); }
     });
     undo.hidden = true;
-    toolbar.append(searchLabel, sortLabel, sortDirection);
+    toolbar.append(searchLabel, searchFieldLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
     if (integerFields.length) toolbar.append(rangeControls);
     const exportMatching = (format) => {
@@ -678,7 +690,7 @@
     }
 
     function currentView() {
-      return sortRecords(spec, records.filter(record => matches(spec, record, search.value) &&
+      return sortRecords(spec, records.filter(record => matches(spec, record, search.value, searchField.value) &&
         (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value)) &&
         (!activeRange || record[activeRange.name] !== null &&
           (activeRange.low === null || record[activeRange.name] >= activeRange.low) &&
