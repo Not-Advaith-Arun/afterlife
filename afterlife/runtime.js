@@ -221,9 +221,9 @@
       .replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   }
 
-  function matches(spec, record, query, fieldName = "") {
+  function matches(spec, record, query, fieldName = "", matchMode = "contains") {
     const needle = query.trim().toLocaleLowerCase();
-    return !needle || spec.fields.some(field => (!fieldName || field.name === fieldName) && String(record[field.name] ?? "").toLocaleLowerCase().includes(needle));
+    return !needle || spec.fields.some(field => (!fieldName || field.name === fieldName) && (matchMode === "exact" ? String(record[field.name] ?? "").toLocaleLowerCase() === needle : String(record[field.name] ?? "").toLocaleLowerCase().includes(needle)));
   }
 
   function exportDataJSON(value) {
@@ -373,6 +373,13 @@
       search.placeholder = field ? `Search ${field.label}…` : "Search any field…";
       currentPage = 0; render();
     });
+    const searchModeLabel = node("label", "Search match", "sort-label");
+    const searchMode = node("select"); searchMode.setAttribute("aria-label", "Search match");
+    for (const [value,label] of [["contains","Contains text"],["exact","Whole value"]]) {
+      const option = node("option",label); option.value = value; searchMode.append(option);
+    }
+    searchModeLabel.append(searchMode);
+    searchMode.addEventListener("change", () => {currentPage = 0; render();});
     const sortLabel = node("label", "Sort records", "sort-label");
     const sortField = node("select");
     sortField.id = "sort-field";
@@ -488,7 +495,7 @@
     rangeField.addEventListener("change", () => {clearRange(); viewChanged();});
     rangeControls.append(rangeField, minimum, maximum, applyRange);
     const resetView = button("Reset view", () => {
-      search.value = ""; searchField.value = ""; search.placeholder = "Search any field…";
+      search.value = ""; searchField.value = ""; searchMode.value = "contains"; search.placeholder = "Search any field…";
       sortField.value = "";
       descending = false;
       sortDirection.textContent = "Ascending";
@@ -522,7 +529,7 @@
       if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell(entries.length === 1 ? "Deleted record restored." : "Deleted records restored."); }
     });
     undo.hidden = true;
-    toolbar.append(searchLabel, searchFieldLabel, sortLabel, sortDirection);
+    toolbar.append(searchLabel, searchFieldLabel, searchModeLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
     if (integerFields.length) toolbar.append(rangeControls);
     toolbar.append(presenceLabel);
@@ -737,7 +744,7 @@
     }
 
     function currentView() {
-      return sortRecords(spec, records.filter(record => matches(spec, record, search.value, searchField.value) &&
+      return sortRecords(spec, records.filter(record => matches(spec, record, search.value, searchField.value, searchMode.value) &&
         (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value)) &&
         (!presenceField.value || ((record[presenceField.value] === null || record[presenceField.value] === "") === (presenceValue.value === "empty"))) &&
         (!activeRange || record[activeRange.name] !== null &&
