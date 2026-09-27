@@ -495,6 +495,14 @@
     };
     rangeField.addEventListener("change", () => {clearRange(); viewChanged();});
     rangeControls.append(rangeField, minimum, maximum, applyRange);
+    const summaryLabel = node("label", "Summarize integers", "sort-label");
+    const summaryField = node("select"); summaryField.setAttribute("aria-label", "Integer summary field");
+    const summaryNone = node("option", "No integer summary"); summaryNone.value = ""; summaryField.append(summaryNone);
+    for (const field of integerFields) {
+      const option = node("option",field.label); option.value = field.name; summaryField.append(option);
+    }
+    const integerSummary = node("p", "", "integer-summary"); integerSummary.setAttribute("role","status");
+    summaryLabel.append(summaryField); summaryField.addEventListener("change", () => render());
     const resetView = button("Reset view", () => {
       search.value = ""; searchField.value = ""; searchMode.value = "contains"; search.placeholder = "Search any field…";
       sortField.value = "";
@@ -504,7 +512,7 @@
       sortDirection.disabled = true;
       presenceField.value = ""; presenceValue.value = "empty"; presenceValue.disabled = true;
       filterField.value = "";
-      rangeField.value = ""; clearRange();
+      rangeField.value = ""; clearRange(); summaryField.value = "";
       refreshFilterValues();
       viewChanged();
     });
@@ -545,7 +553,7 @@
     undoFieldUpdate.hidden = true;
     toolbar.append(searchLabel, searchFieldLabel, searchModeLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
-    if (integerFields.length) toolbar.append(rangeControls);
+    if (integerFields.length) toolbar.append(rangeControls,summaryLabel,integerSummary);
     toolbar.append(presenceLabel);
     const exportMatching = (format) => {
       if (committing) return tell("Wait for the current save to finish before downloading.", true);
@@ -773,6 +781,14 @@
       list.replaceChildren();
       const visible = currentView();
       count.textContent = `${visible.length} of ${records.length} records`;
+      integerSummary.hidden = !summaryField.value;
+      if (summaryField.value) {
+        const values = visible.map(record => record[summaryField.value]).filter(value => value !== null);
+        const sum = values.reduce((total,value) => total + BigInt(value),0n);
+        const low = values.reduce((current,value) => current === null || value < current ? value : current,null);
+        const high = values.reduce((current,value) => current === null || value > current ? value : current,null);
+        integerSummary.textContent = `${values.length} integer values; ${visible.length-values.length} empty; sum ${sum}; min ${low === null ? "none" : low}; max ${high === null ? "none" : high}. All matching pages; exact integer sum.`;
+      }
       pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
       const start = currentPage * PAGE_SIZE;
