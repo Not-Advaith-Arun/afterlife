@@ -19,7 +19,7 @@ const {execFileSync}=require("node:child_process"),{pathToFileURL}=require("node
   assert.equal(await printed.locator("tbody tr").last().locator("td").nth(1).textContent(),attack);assert.equal(await printed.evaluate(()=>window.printAttack),undefined);assert.equal(await printed.locator("script,img,input,button").count(),0);
   await page.getByRole("searchbox").fill("no-such-record");const emptyDownload=page.waitForEvent("download");await page.getByRole("button",{name:"Download printable view",exact:true}).click();const empty=path.join(directory,"empty.html");await (await emptyDownload).saveAs(empty);await printed.goto(pathToFileURL(empty).href);assert.equal(await printed.locator("tbody tr").count(),0);assert.match(await printed.locator("p").textContent(),/0 matching records/);
   const wideData=path.join(directory,"wide.json"),wideHTML=path.join(directory,"wide.html");
-  await fs.writeFile(wideData,JSON.stringify({records:Array.from({length:300},(_,i)=>({id:`wide-${i}`,title:"Wide",pages:0,body:"<".repeat(10000)}))}));
+  await fs.writeFile(wideData,JSON.stringify({records:Array.from({length:300},(_,i)=>({id:`wide-${i}`,title:"Wide",pages:0,body:'"'.repeat(10000)}))}));
   execFileSync(process.env.PYTHON||"python3",["-m","afterlife","from-python","examples/python-notebook/model.py",wideData,"-o",wideHTML],{cwd:root});
   const wide=await context.newPage();monitor(wide);await wide.goto(pathToFileURL(wideHTML).href);
   let oversizedDownloads=0;wide.on("download",()=>oversizedDownloads++);await wide.getByRole("button",{name:"Download printable view",exact:true}).click();
