@@ -264,6 +264,7 @@
     let currentId = null;
     let lastDeleted = null;
     let lastFieldUpdate = null;
+    let lastRecordEdit = null;
     let dirty = false;
     let stale = false;
     let lastStored = null;
@@ -625,6 +626,14 @@
       }
     });
     undoFieldUpdate.hidden = true;
+    const undoEdit = button("Undo last edit", async () => {
+      if(!lastRecordEdit||committing)return;
+      if(dirty)return tell("Save or cancel editor changes before undoing the last edit.",true);
+      if(JSON.stringify(records)!==lastRecordEdit.after){lastRecordEdit=null;undoEdit.hidden=true;return tell("Records changed after that edit. Undo refused; current records kept.",true);}
+      const before=lastRecordEdit.before;
+      if(await commit(before,{resetPage:true})){panel.hidden=true;currentId=null;dirty=false;tell("Last edit undone. Original field values restored; further record changes, imports or reloads clear this undo.");newButton.focus();}
+    });
+    undoEdit.hidden=true;
     toolbar.append(searchLabel, searchFieldLabel, searchModeLabel, sortLabel, sortDirection, secondaryLabel);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
     if (integerFields.length) toolbar.append(rangeControls,summaryLabel,integerSummary);
@@ -698,7 +707,7 @@
       toolbar.append(bulkChoice, bulkUpdate);
     }
     toolbar.append(pageSizeLabel, resetView, button("Export matching JSON", () => exportMatching("json")),
-      button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), printMatching, deleteMatching, count, undo, undoFieldUpdate, separateCopy, newButton);
+      button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), printMatching, deleteMatching, count, undo, undoFieldUpdate, undoEdit, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -953,6 +962,7 @@
           }
         }
         records = checked;
+        lastRecordEdit=null;undoEdit.hidden=true;
         if (resetPage) currentPage = 0;
         if (blockedStorage) status.textContent = storageFailure + "Changes are only in memory. Download app or export JSON before closing this tab.";
         render();
@@ -990,7 +1000,11 @@
       if (currentId && !records.some(item => item.id === currentId)) return tell("This record no longer exists. Reopen the editor.", true);
       const {id, ...changes} = record;
       const operation = currentId ? {op: "edit", id: currentId, changes} : {op: "create", record};
-      if (await commitOperation(operation)) { dirty = false; panel.hidden = true; currentId = null; tell("Record saved."); newButton.focus(); }
+      const beforeEdit=currentId?records.map(row=>({...row})):null;
+      if (await commitOperation(operation)) {
+        if(beforeEdit&&JSON.stringify(beforeEdit)!==JSON.stringify(records)){lastRecordEdit={before:beforeEdit,after:JSON.stringify(records)};undoEdit.hidden=false;}
+        dirty = false; panel.hidden = true; currentId = null; tell(lastRecordEdit?"Record saved. Undo last edit is available in this tab until another record change, import or reload.":"Record saved.");newButton.focus();
+      }
     });
     fileInput.addEventListener("change", async () => {
       const file = fileInput.files[0];
