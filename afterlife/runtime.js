@@ -224,6 +224,7 @@
   }
 
   function matches(spec, record, query, fieldName = "", matchMode = "contains") {
+    if(fieldName === "id") return !query || (matchMode === "exact" ? record.id === query : record.id.includes(query));
     const needle = query.trim().toLocaleLowerCase();
     return !needle || spec.fields.some(field => (!fieldName || field.name === fieldName) && (matchMode === "exact" ? String(record[field.name] ?? "").toLocaleLowerCase() === needle : String(record[field.name] ?? "").toLocaleLowerCase().includes(needle)));
   }
@@ -379,10 +380,11 @@
     for (const field of spec.fields) {
       const option = node("option", field.label); option.value = field.name; searchField.append(option);
     }
+    const idSearch=node("option","Record ID (case-sensitive)");idSearch.value="id";searchField.append(idSearch);
     searchFieldLabel.append(searchField);
     searchField.addEventListener("change", () => {
       const field = spec.fields.find(item => item.name === searchField.value);
-      search.placeholder = field ? `Search ${field.label}…` : "Search any field…";
+      search.placeholder = searchField.value === "id" ? "Search exact ID characters…" : field ? `Search ${field.label}…` : "Search any field…";
       currentPage = 0; render();
     });
     const searchModeLabel = node("label", "Search match", "sort-label");
@@ -899,6 +901,7 @@
           row.append(cell);
         }
         const actions = node("td", undefined, "row-actions");
+        actions.append(node("small","ID: "+record.id,"record-identity"));
         actions.append(button("Edit", () => openEditor(record)), button("Duplicate", () => openEditor(record, {duplicate: true})), button("Delete", async () => {
           if (!confirm("Delete this record? You can undo the most recent deletion.")) return;
           const index = records.findIndex(item => item.id === record.id);
