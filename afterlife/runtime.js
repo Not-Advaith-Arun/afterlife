@@ -529,7 +529,21 @@
       if (committing || ![25,50,100].includes(selected)) {pageSizeChoice.value=String(pageSize);return tell("Wait for the current save to finish.",true);}
       const first=currentPage*pageSize;pageSize=selected;currentPage=Math.floor(first/pageSize);render();
     });
+    const visibleFields = new Set(spec.fields.map(field => field.name));
+    const columnChoices = new Map();
+    const columnPanel = node("details", undefined, "column-choices");
+    columnPanel.append(node("summary", "Table columns"),node("p", "Choose columns for this tab. Hidden fields remain in search, sorting, editors and all exports. This is a display preference, not data removal.", "storage-note"));
+    const refreshColumns = () => {for(const [name,input] of columnChoices)input.checked=visibleFields.has(name);};
+    for(const field of spec.fields){
+      const label=node("label"),input=node("input");input.type="checkbox";input.checked=true;input.setAttribute("aria-label","Show "+field.label+" column");
+      input.addEventListener("change",()=>{
+        if(!input.checked&&visibleFields.size===1){input.checked=true;return tell("Keep at least one table column visible.",true);}
+        if(input.checked)visibleFields.add(field.name);else visibleFields.delete(field.name);
+        render();tell("Table columns updated for this tab. Hidden fields remain in records and exports.");
+      });label.append(input,document.createTextNode(field.label));columnChoices.set(field.name,input);columnPanel.append(label);
+    }
     const resetView = button("Reset view", () => {
+      visibleFields.clear();for(const field of spec.fields)visibleFields.add(field.name);refreshColumns();
       search.value = ""; searchField.value = ""; searchMode.value = "contains"; search.placeholder = "Search any field…";
       sortField.value = ""; secondaryField.value = ""; secondaryField.disabled = true;
       descending = false; pageSize=PAGE_SIZE; pageSizeChoice.value=String(pageSize);
@@ -548,7 +562,7 @@
     const viewName = node("input");viewName.type="text";viewName.maxLength=80;viewName.setAttribute("aria-label","View name");viewName.placeholder="Name this review view…";
     const viewChoice = node("select");viewChoice.setAttribute("aria-label","Saved session view");
     const refreshViews = () => {const previous=viewChoice.value;viewChoice.replaceChildren();const empty=node("option","Choose a session view");empty.value="";viewChoice.append(empty);for(const name of sessionViews.keys()){const option=node("option",name);option.value=name;viewChoice.append(option);}if(sessionViews.has(previous))viewChoice.value=previous;};
-    const captureView = () => ({search:search.value,searchField:searchField.value,searchMode:searchMode.value,sort:sortField.value,secondary:secondaryField.value,descending,filter:filterField.value,value:filterValue.value,presence:presenceField.value,presenceValue:presenceValue.value,pageSize,summary:summaryField.value,range:activeRange?{...activeRange}:null});
+    const captureView = () => ({search:search.value,searchField:searchField.value,searchMode:searchMode.value,sort:sortField.value,secondary:secondaryField.value,descending,filter:filterField.value,value:filterValue.value,presence:presenceField.value,presenceValue:presenceValue.value,pageSize,summary:summaryField.value,range:activeRange?{...activeRange}:null,columns:[...visibleFields]});
     const saveView = button("Save session view", () => {
       const name=viewName.value.trim();
       if(!name)return tell("Choose a view name first.",true);
@@ -560,6 +574,7 @@
     const applyView = button("Apply session view", () => {
       const saved=sessionViews.get(viewChoice.value);if(!saved)return tell("Choose a saved session view first.",true);
       if(committing)return tell("Wait for the current save before changing views.",true);
+      visibleFields.clear();for(const name of saved.columns)visibleFields.add(name);refreshColumns();
       search.value=saved.search;searchField.value=saved.searchField;searchMode.value=saved.searchMode;search.placeholder=saved.searchField?"Search selected field…":"Search any field…";
       sortField.value=saved.sort;secondaryField.value=saved.secondary;secondaryField.disabled=!saved.sort;descending=saved.descending;
       sortDirection.disabled=!saved.sort;sortDirection.textContent=descending?"Descending":"Ascending";sortDirection.setAttribute("aria-pressed",String(descending));
@@ -795,7 +810,7 @@
     form.append(formActions);
     panel.append(panelTitle, form);
     layout.append(list, panel);
-    app.append(header, status, message, toolbar, viewPanel, importReview, pagination, layout,
+    app.append(header, status, message, toolbar, columnPanel, viewPanel, importReview, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
 
     function openEditor(record = null, {duplicate = false} = {}) {
@@ -860,10 +875,11 @@
         list.append(node("p", records.length ? "No records match your search." : "This copy is empty. Create your first record.", "empty"));
         return;
       }
+      const tableFields=spec.fields.filter(field=>visibleFields.has(field.name));
       const table = node("table");
       const head = node("thead");
       const headings = node("tr");
-      for (const field of spec.fields) {
+      for (const field of tableFields) {
         const th = node("th", field.label);
         th.scope = "col";
         headings.append(th);
@@ -876,7 +892,7 @@
       for (const record of visible.slice(start, start + pageSize)) {
         const row = node("tr");
         row.dataset.recordId = record.id;
-        for (const field of spec.fields) {
+        for (const field of tableFields) {
           const value = record[field.name];
           const cell = node("td", field.type === "boolean" ? (value ? "Yes" : "No") : String(value ?? ""));
           if (field.type === "multiline") cell.className = "long-text";

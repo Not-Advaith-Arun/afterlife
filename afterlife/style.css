@@ -5,3 +5,4 @@ html[data-theme=dark]{color-scheme:dark;--bg:#131419;--surface:#1a1b22;--surface
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 
 .saved-views{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:18px 22px;margin:18px 0}.saved-views h2{font-size:14px;margin:0}.saved-views p{flex-basis:100%;padding:0;margin:0 0 6px}.saved-views input,.saved-views select{width:240px}.saved-views button{font-size:11px}@media(max-width:650px){.saved-views{padding:17px}.saved-views input,.saved-views select{width:100%}}
+.column-choices{margin:18px 0;padding:16px;background:var(--surface,#fff);border:1px solid var(--line,#ddd);border-radius:10px}.column-choices summary{cursor:pointer;font-weight:600}.column-choices label{display:inline-flex;gap:7px;align-items:center;margin:8px 18px 0 0}.column-choices input{width:18px;height:18px}
