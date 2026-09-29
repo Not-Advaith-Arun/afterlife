@@ -790,6 +790,26 @@
       bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value; previewUpdate.disabled = !bulkChoice.value;});
       exportControls.append(bulkChoice, previewUpdate, bulkUpdate);
     }
+    const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
+    categoryPanel.append(node("summary","Matching category totals"),categoryContent);
+    const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
+    const noCategory=node("option","Choose a category field…");noCategory.value="";categoryField.append(noCategory);
+    for(const field of bulkFields){const option=node("option",field.label);option.value=field.name;categoryField.append(option);}
+    categoryLabel.append(categoryField);const categoryOutput=node("div"),categoryScope=node("p","Counts cover all matching pages of current in-tab records only; unsaved editor inputs are excluded. Field labels and category values may be private. This summary selection stays in this tab and is not included in view presets.");
+    function categoryTotals(matching=currentView()){
+      const field=bulkFields.find(item=>item.name===categoryField.value);if(!field)return null;
+      const values=field.type==="boolean"?[true,false]:[...(field.required?[]:[""]),...field.options];
+      const counts=new Map(values.map(value=>[value,0]));for(const record of matching)counts.set(record[field.name],counts.get(record[field.name])+1);
+      return {format:"afterlife-category-totals/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,
+        field:field.name,matching_records:matching.length,total_records:records.length,
+        categories:values.map(value=>({value,count:counts.get(value)})),scope:categoryScope.textContent};
+    }
+    const exportCategory=button("Download category totals",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);const totals=categoryTotals();if(!totals)return;
+      const text=JSON.stringify(totals,null,2);if(new Blob([text]).size>MAX_BYTES)return tell("Category totals exceed10 MiB.",true);
+      download(text,spec.app_id+"-category-totals.json","application/json");tell("Downloaded matching category counts only. No records changed; protect category values in the file.");
+    });
+    categoryField.addEventListener("change",render);categoryContent.append(categoryLabel,categoryScope,categoryOutput,exportCategory);categoryPanel.hidden=!bulkFields.length;
     const advanced=node("details",undefined,"toolbar-group advanced-filters"),advancedSummary=node("summary","Filter and sort"),advancedContent=node("div",undefined,"toolbar-group-content");
     advanced.open=window.matchMedia("(min-width: 900px)").matches;advanced.append(advancedSummary,advancedContent);
     toolbar.insertBefore(advanced,sortLabel);
@@ -801,7 +821,7 @@
     const exportsPanel=node("details",undefined,"toolbar-group export-actions");exportsPanel.open=window.matchMedia("(min-width: 900px)").matches;
     exportsPanel.append(node("summary","Exports and bulk actions"),exportControls);
     exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),csvScopeLabel,button("Download matching app",()=>saveHTML(true)),printScopeLabel,printMatching,deleteMatching);
-    toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel);
+    toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel,categoryPanel);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -961,6 +981,13 @@
       const advancedActive=Number(Boolean(sortField.value))+Number(Boolean(filterField.value&&filterValue.value!=="*"))+Number(Boolean(extraFilterField.value&&extraFilterValue.value!=="*"))+Number(Boolean(presenceField.value))+Number(Boolean(activeRange))+Number(Boolean(summaryField.value))+Number(pageSize!==PAGE_SIZE);
       advancedSummary.textContent="Filter and sort"+(advancedActive?" ("+advancedActive+" settings active)":"");
       count.textContent = `${visible.length} of ${records.length} records`;
+      categoryOutput.replaceChildren();const totals=categoryTotals(visible);exportCategory.disabled=!totals;
+      if(totals){
+        categoryOutput.append(node("p",`${totals.matching_records} matching records across all pages; ${totals.total_records} total records.`));
+        const list=node("dl");list.setAttribute("aria-label","Matching category counts");
+        for(const row of totals.categories){list.append(node("dt",typeof row.value==="boolean"?(row.value?"Yes":"No"):row.value||"No value"),node("dd",String(row.count)));}
+        categoryOutput.append(list);
+      }
       integerSummary.hidden = !summaryField.value;
       if (summaryField.value) {
         const values = visible.map(record => record[summaryField.value]).filter(value => value !== null);
