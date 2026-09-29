@@ -671,6 +671,7 @@
         tell(`Deleted ${entries.length} matching records. Undo is available until the next import or reload.`);
       }
     }, "danger");
+    const exportControls=node("div",undefined,"toolbar-group-content");
     const bulkFields = spec.fields.filter(field => ["boolean", "select"].includes(field.type));
     if (bulkFields.length) {
       const bulkChoice = node("select");
@@ -704,10 +705,19 @@
       });
       bulkUpdate.disabled = true;
       bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value;});
-      toolbar.append(bulkChoice, bulkUpdate);
+      exportControls.append(bulkChoice, bulkUpdate);
     }
-    toolbar.append(pageSizeLabel, resetView, button("Export matching JSON", () => exportMatching("json")),
-      button("Export matching CSV", () => exportMatching("csv")), button("Download matching app", () => saveHTML(true)), printMatching, deleteMatching, count, undo, undoFieldUpdate, undoEdit, separateCopy, newButton);
+    const advanced=node("details",undefined,"toolbar-group advanced-filters"),advancedSummary=node("summary","Filter and sort"),advancedContent=node("div",undefined,"toolbar-group-content");
+    advanced.open=window.matchMedia("(min-width: 900px)").matches;advanced.append(advancedSummary,advancedContent);
+    toolbar.insertBefore(advanced,sortLabel);
+    advancedContent.append(sortLabel,sortDirection,secondaryLabel);
+    if(filterFields.length)advancedContent.append(filterLabel,filterValueLabel);
+    if(integerFields.length)advancedContent.append(rangeControls,summaryLabel,integerSummary);
+    advancedContent.append(presenceLabel,pageSizeLabel);
+    const exportsPanel=node("details",undefined,"toolbar-group export-actions");exportsPanel.open=window.matchMedia("(min-width: 900px)").matches;
+    exportsPanel.append(node("summary","Exports and bulk actions"),exportControls);
+    exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),button("Download matching app",()=>saveHTML(true)),printMatching,deleteMatching);
+    toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -863,6 +873,8 @@
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
       const visible = currentView();
+      const advancedActive=Number(Boolean(sortField.value))+Number(Boolean(filterField.value&&filterValue.value!=="*"))+Number(Boolean(presenceField.value))+Number(Boolean(activeRange))+Number(Boolean(summaryField.value))+Number(pageSize!==PAGE_SIZE);
+      advancedSummary.textContent="Filter and sort"+(advancedActive?" ("+advancedActive+" settings active)":"");
       count.textContent = `${visible.length} of ${records.length} records`;
       integerSummary.hidden = !summaryField.value;
       if (summaryField.value) {
