@@ -139,10 +139,11 @@
     return rows.join("\r\n") + "\r\n";
   }
 
-  function printableRecords(spec, records, total) {
+  function printableRecords(spec, records, total, selectedColumns = null) {
     const escape = value => String(value).replace(/[&<>"']/g, character => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[character]);
-    const columns = [{name:"id",label:"Record ID",type:"text"}, ...spec.fields];
-    const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${escape(spec.title)} — Printable records</title><style>body{font:12px/1.5 system-ui,sans-serif;color:#111;margin:2rem}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;vertical-align:top;border:1px solid #999;padding:.4rem;overflow-wrap:anywhere;white-space:pre-wrap}thead{display:table-header-group}tr{break-inside:avoid}@page{margin:15mm}@media print{body{margin:0}}</style></head><body><h1>${escape(spec.title)}</h1><p>${records.length} matching records of ${total}, in selected view order, including every page. Static readable report; use JSON or the app file for an exact editable backup.</p><table><thead><tr>${columns.map(field => `<th scope="col">${escape(field.label)}</th>`).join("")}</tr></thead><tbody>`;
+    const columns = [{name:"id",label:"Record ID",type:"text"}, ...spec.fields.filter(field => selectedColumns === null || selectedColumns.has(field.name))];
+    const columnScope = selectedColumns === null ? "All record fields and Record ID included." : `${columns.length - 1} of ${spec.fields.length} table fields included, plus Record ID. Hidden table fields are omitted from this printable file only; other data exports still contain them.`;
+    const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${escape(spec.title)} — Printable records</title><style>body{font:12px/1.5 system-ui,sans-serif;color:#111;margin:2rem}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;vertical-align:top;border:1px solid #999;padding:.4rem;overflow-wrap:anywhere;white-space:pre-wrap}thead{display:table-header-group}tr{break-inside:avoid}@page{margin:15mm}@media print{body{margin:0}}</style></head><body><h1>${escape(spec.title)}</h1><p>${records.length} matching records of ${total}, in selected view order, including every page. ${columnScope} Static readable report; use JSON or the app file for an exact editable backup.</p><table><thead><tr>${columns.map(field => `<th scope="col">${escape(field.label)}</th>`).join("")}</tr></thead><tbody>`;
     const tail = "</tbody></table></body></html>";
     const parts = [head];
     const encoder = new TextEncoder();
@@ -535,7 +536,7 @@
     const visibleFields = new Set(spec.fields.map(field => field.name));
     const columnChoices = new Map();
     const columnPanel = node("details", undefined, "column-choices");
-    columnPanel.append(node("summary", "Table columns"),node("p", "Choose columns for this tab. Hidden fields remain in search, sorting, editors and all exports. This is a display preference, not data removal.", "storage-note"));
+    columnPanel.append(node("summary", "Table columns"),node("p", "Choose columns for this tab. Hidden fields remain in search, sorting, editors and data exports. Printable output omits them only when you explicitly choose visible table columns. Hiding is not data removal.", "storage-note"));
     const refreshColumns = () => {for(const [name,input] of columnChoices)input.checked=visibleFields.has(name);};
     for(const field of spec.fields){
       const label=node("label"),input=node("input");input.type="checkbox";input.checked=true;input.setAttribute("aria-label","Show "+field.label+" column");
@@ -650,12 +651,14 @@
         tell(`Download requested for all ${matching.length} matching records in view order, including other pages. Full collection kept. ${format === "csv" ? "CSV text has an apostrophe prefix; use JSON for exact data." : "Keep the app file with this data export."}`);
       } catch (error) { tell(error.message, true); }
     };
+    const printScopeLabel=node("label","Printable columns","sort-label"),printScope=node("select");printScope.setAttribute("aria-label","Printable columns");
+    for(const [value,text] of [["all","All fields and Record ID"],["visible","Visible table columns and Record ID"]]){const option=node("option",text);option.value=value;printScope.append(option);}printScopeLabel.append(printScope);
     const printMatching = button("Download printable view", () => {
       if (committing) return tell("Wait for the current save to finish before downloading.", true);
       try {
         const matching = currentView();
-        download(printableRecords(spec, matching, records.length), spec.app_id+"-matching-print.html", "text/html;charset=utf-8");
-        tell(`Printable view requested for all ${matching.length} matching records, including other pages. Open the downloaded file and print from your browser. Full collection kept; use JSON/app download for an editable backup.`);
+        download(printableRecords(spec, matching, records.length, printScope.value === "visible" ? visibleFields : null), spec.app_id+"-matching-print.html", "text/html;charset=utf-8");
+        tell(`Printable view requested for all ${matching.length} matching records, including other pages. ${printScope.value === "visible" ? "Only visible table fields plus Record ID included." : "All fields plus Record ID included."} Open the downloaded file and print from your browser. Full collection kept; use JSON/app download for an editable backup.`);
       } catch (error) {tell(error.message, true);}
     });
     const deleteMatching = button("Delete matching records", async () => {
@@ -716,7 +719,7 @@
     advancedContent.append(presenceLabel,pageSizeLabel);
     const exportsPanel=node("details",undefined,"toolbar-group export-actions");exportsPanel.open=window.matchMedia("(min-width: 900px)").matches;
     exportsPanel.append(node("summary","Exports and bulk actions"),exportControls);
-    exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),button("Download matching app",()=>saveHTML(true)),printMatching,deleteMatching);
+    exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),button("Download matching app",()=>saveHTML(true)),printScopeLabel,printMatching,deleteMatching);
     toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
