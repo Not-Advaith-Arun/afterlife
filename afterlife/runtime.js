@@ -951,7 +951,15 @@
     };
     formActions.append(save, button("Cancel", close));
     form.append(formActions);
-    panel.append(panelTitle, form);
+    const editorNavigation = node("nav", undefined, "form-actions");
+    editorNavigation.setAttribute("aria-label", "Matching record navigation");
+    const editorPosition = node("span");
+    editorPosition.setAttribute("role", "status");
+    const previousRecord = button("Previous matching record", () => moveEditor(-1));
+    const nextRecord = button("Next matching record", () => moveEditor(1));
+    editorNavigation.append(previousRecord, editorPosition, nextRecord);
+    editorNavigation.hidden = true;
+    panel.append(panelTitle, editorNavigation, form);
     layout.append(list, panel);
     app.append(header, status, message, toolbar, columnPanel, viewPanel, importReview, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
@@ -973,7 +981,22 @@
       }
       dirty = false;
       panel.hidden = false;
+      refreshEditorNavigation();
       fieldInputs.values().next().value.focus();
+    }
+
+    function refreshEditorNavigation() {
+      editorNavigation.hidden = currentId === null;
+      if (currentId === null) return;
+      const visible = currentView(), index = visible.findIndex(record => record.id === currentId);
+      previousRecord.disabled = committing || index <= 0;
+      nextRecord.disabled = committing || index < 0 || index >= visible.length - 1;
+      editorPosition.textContent = index < 0 ? "Edited record is outside the current view" : `Matching record ${index + 1} of ${visible.length}`;
+    }
+
+    function moveEditor(direction) {
+      const visible = currentView(), index = visible.findIndex(record => record.id === currentId);
+      if (index >= 0 && visible[index + direction]) openEditor(visible[index + direction]);
     }
 
     function changePage(page) {
@@ -996,6 +1019,7 @@
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
       const visible = currentView();
+      refreshEditorNavigation();
       refreshChosen();
       const advancedActive=Number(Boolean(sortField.value))+Number(Boolean(filterField.value&&filterValue.value!=="*"))+Number(Boolean(extraFilterField.value&&extraFilterValue.value!=="*"))+Number(Boolean(presenceField.value))+Number(Boolean(activeRange))+Number(Boolean(summaryField.value))+Number(pageSize!==PAGE_SIZE);
       advancedSummary.textContent="Filter and sort"+(advancedActive?" ("+advancedActive+" settings active)":"");
