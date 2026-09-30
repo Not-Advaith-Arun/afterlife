@@ -1013,7 +1013,11 @@
         const sum = values.reduce((total,value) => total + BigInt(value),0n);
         const low = values.reduce((current,value) => current === null || value < current ? value : current,null);
         const high = values.reduce((current,value) => current === null || value > current ? value : current,null);
-        integerSummary.textContent = `${values.length} integer values; ${visible.length-values.length} empty; sum ${sum}; min ${low === null ? "none" : low}; max ${high === null ? "none" : high}. All matching pages; exact integer sum.`;
+        const rational=(numerator,denominator)=>{let a=numerator<0n?-numerator:numerator,b=denominator;while(b){const remainder=a%b;a=b;b=remainder;}const common=a||1n;return denominator/common===1n?String(numerator/common):`${numerator/common}/${denominator/common}`;};
+        const ordered=values.slice().sort((one,two)=>one<two?-1:one>two?1:0),middle=Math.floor(ordered.length/2);
+        const mean=values.length?rational(sum,BigInt(values.length)):"none";
+        const median=values.length?(values.length%2?String(ordered[middle]):rational(BigInt(ordered[middle-1])+BigInt(ordered[middle]),2n)):"none";
+        integerSummary.textContent = `${values.length} integer values; ${visible.length-values.length} empty; sum ${sum}; min ${low === null ? "none" : low}; max ${high === null ? "none" : high}; mean ${mean}; median ${median}. All matching pages; exact integers and reduced rational fractions, never rounded decimal estimates.`;
       }
       pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
