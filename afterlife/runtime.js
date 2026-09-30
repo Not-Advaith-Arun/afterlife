@@ -266,6 +266,7 @@
     let lastDeleted = null;
     let lastFieldUpdate = null;
     let lastRecordEdit = null;
+    const chosenIDs = new Set();
     let dirty = false;
     let stale = false;
     let lastStored = null;
@@ -790,6 +791,23 @@
       bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value; previewUpdate.disabled = !bulkChoice.value;});
       exportControls.append(bulkChoice, previewUpdate, bulkUpdate);
     }
+    const selectionPanel=node("details",undefined,"toolbar-group chosen-records"),selectionHeading=node("summary","Chosen record handoff"),selectionContent=node("div",undefined,"toolbar-group-content");
+    const chooseLabel=node("label"," Choose individual records"),chooseMode=node("input");chooseMode.type="checkbox";chooseLabel.prepend(chooseMode);
+    const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. No bulk update or deletion uses these choices.");
+    const chosenCount=node("p");chosenCount.setAttribute("aria-live","polite");
+    function refreshChosen(){
+      selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
+      chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
+      chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+    }
+    function exportChosen(kind){
+      if(committing)return tell("Wait for the current save to finish.",true);
+      if(!chosenIDs.size)return tell("Choose a record first.",true);
+      const selected=records.filter(record=>chosenIDs.has(record.id));
+      try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected),spec.app_id+"-chosen-data."+(kind==="json"?"json":"csv"),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records with all fields. Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
+    }
+    const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
@@ -821,7 +839,7 @@
     const exportsPanel=node("details",undefined,"toolbar-group export-actions");exportsPanel.open=window.matchMedia("(min-width: 900px)").matches;
     exportsPanel.append(node("summary","Exports and bulk actions"),exportControls);
     exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),csvScopeLabel,button("Download matching app",()=>saveHTML(true)),printScopeLabel,printMatching,deleteMatching);
-    toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel,categoryPanel);
+    toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel,categoryPanel,selectionPanel);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -978,6 +996,7 @@
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
       const visible = currentView();
+      refreshChosen();
       const advancedActive=Number(Boolean(sortField.value))+Number(Boolean(filterField.value&&filterValue.value!=="*"))+Number(Boolean(extraFilterField.value&&extraFilterValue.value!=="*"))+Number(Boolean(presenceField.value))+Number(Boolean(activeRange))+Number(Boolean(summaryField.value))+Number(pageSize!==PAGE_SIZE);
       advancedSummary.textContent="Filter and sort"+(advancedActive?" ("+advancedActive+" settings active)":"");
       count.textContent = `${visible.length} of ${records.length} records`;
@@ -1035,6 +1054,10 @@
         }
         const actions = node("td", undefined, "row-actions");
         actions.append(node("small","ID: "+record.id,"record-identity"));
+        if(chooseMode.checked){
+          const label=node("label"," Choose"),selected=node("input");selected.type="checkbox";selected.checked=chosenIDs.has(record.id);selected.setAttribute("aria-label","Choose record "+record.id);
+          selected.addEventListener("change",()=>{if(selected.checked)chosenIDs.add(record.id);else chosenIDs.delete(record.id);refreshChosen();});label.prepend(selected);actions.append(label);
+        }
         actions.append(button("Edit", () => openEditor(record)), button("Duplicate", () => openEditor(record, {duplicate: true})), button("Delete", async () => {
           if (!confirm("Delete this record? You can undo the most recent deletion.")) return;
           const index = records.findIndex(item => item.id === record.id);
@@ -1086,6 +1109,7 @@
           }
         }
         records = checked;
+        chosenIDs.clear();
         lastRecordEdit=null;undoEdit.hidden=true;
         if (resetPage) currentPage = 0;
         if (blockedStorage) status.textContent = storageFailure + "Changes are only in memory. Download app or export JSON before closing this tab.";
