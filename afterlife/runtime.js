@@ -941,6 +941,10 @@
     const formActions = node("div", undefined, "form-actions");
     const save = node("button", "Save record", "primary");
     save.type = "submit";
+    const saveNext = node("button", "Save and next matching");
+    saveNext.type = "submit";
+    const continueHint = node("p", "Save and next uses the matching order before this edit is saved.");
+    saveNext.hidden = continueHint.hidden = true;
     const close = () => {
       if (committing) return tell("Wait for the current save to finish.", true);
       if (dirty && !confirm("Discard unsaved changes in the editor?")) return;
@@ -949,8 +953,8 @@
       currentId = null;
       newButton.focus();
     };
-    formActions.append(save, button("Cancel", close));
-    form.append(formActions);
+    formActions.append(save, saveNext, button("Cancel", close));
+    form.append(continueHint, formActions);
     const editorNavigation = node("nav", undefined, "form-actions");
     editorNavigation.setAttribute("aria-label", "Matching record navigation");
     const editorPosition = node("span");
@@ -986,11 +990,12 @@
     }
 
     function refreshEditorNavigation() {
-      editorNavigation.hidden = currentId === null;
+      editorNavigation.hidden = saveNext.hidden = continueHint.hidden = currentId === null;
       if (currentId === null) return;
       const visible = currentView(), index = visible.findIndex(record => record.id === currentId);
       previousRecord.disabled = committing || index <= 0;
       nextRecord.disabled = committing || index < 0 || index >= visible.length - 1;
+      saveNext.disabled = nextRecord.disabled;
       editorPosition.textContent = index < 0 ? "Edited record is outside the current view" : `Matching record ${index + 1} of ${visible.length}`;
     }
 
@@ -1105,7 +1110,7 @@
     async function commit(next, {resetPage = false} = {}) {
       if (committing) { tell("A save is already in progress. Try again when it finishes.", true); return false; }
       committing = true;
-      save.disabled = true;
+      save.disabled = saveNext.disabled = true;
       save.textContent = "Saving…";
       for (const input of fieldInputs.values()) input.disabled = true;
       try {
@@ -1149,6 +1154,7 @@
         save.disabled = false;
         save.textContent = "Save record";
         for (const input of fieldInputs.values()) input.disabled = false;
+        refreshEditorNavigation();
       }
     }
 
@@ -1159,6 +1165,9 @@
 
     form.addEventListener("submit", async event => {
       event.preventDefault();
+      const viewBeforeSave = currentView(), currentIndex = viewBeforeSave.findIndex(row => row.id === currentId);
+      const continueId = event.submitter === saveNext && currentIndex >= 0 ? viewBeforeSave[currentIndex + 1]?.id : null;
+      if (event.submitter === saveNext && !continueId) return tell("No next matching record. Use Save record to finish this edit.", true);
       const random = () => [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
       const record = {id: currentId || "r-" + random()};
       for (const field of spec.fields) {
@@ -1179,7 +1188,16 @@
       const beforeEdit=currentId?records.map(row=>({...row})):null;
       if (await commitOperation(operation)) {
         if(beforeEdit&&JSON.stringify(beforeEdit)!==JSON.stringify(records)){lastRecordEdit={before:beforeEdit,after:JSON.stringify(records)};undoEdit.hidden=false;}
-        dirty = false; panel.hidden = true; currentId = null; tell(lastRecordEdit?"Record saved. Undo last edit is available in this tab until another record change, import or reload.":"Record saved.");newButton.focus();
+        dirty = false;
+        const following = continueId && currentView().find(row => row.id === continueId);
+        if (following) {
+          openEditor(following);
+          tell("Record saved. Opened the next matching record from the view before saving. Undo last edit remains available until another record change, import or reload.");
+        } else {
+          panel.hidden = true; currentId = null;
+          tell(lastRecordEdit?"Record saved. Undo last edit is available in this tab until another record change, import or reload.":"Record saved.");
+          newButton.focus();
+        }
       }
     });
     fileInput.addEventListener("change", async () => {
