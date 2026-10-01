@@ -792,6 +792,33 @@
       bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value; previewUpdate.disabled = !bulkChoice.value;});
       exportControls.append(bulkChoice, previewUpdate, bulkUpdate);
     }
+    if(integerFields.length){
+      const numericField=node("select");numericField.setAttribute("aria-label","Matching integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
+      for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
+      const numericValue=node("input");numericValue.type="text";numericValue.inputMode="numeric";numericValue.maxLength=MAX_INTEGER_INPUT_LENGTH;numericValue.setAttribute("aria-label","Matching integer value");numericValue.placeholder="Exact integer; blank means null";
+      const numericScope=node("p","Explicit integer assignment across all matching pages. Blank means null, allowed only for optional fields. No arithmetic or inferred values. Preview excludes unsaved editor inputs; private IDs/values are included in the file.","storage-note");
+      function numericProposal(){
+        const field=integerFields.find(row=>row.name===numericField.value);if(!field)throw new Error("Choose an integer field first.");
+        const raw=numericValue.value.trim();if(raw&&!exactIntegerInput(raw))throw new Error("Use an exactly represented safe integer or blank for null.");
+        const value=raw?Number(raw):null,matching=currentView(),ids=new Set(matching.map(row=>row.id));
+        const next=records.map(row=>ids.has(row.id)?{...row,[field.name]:value}:row);
+        prepareEnvelope(payload,{...envelope(),records:next},true);
+        return {field,value,next,matching_records:matching.length,changes:matching.filter(row=>row[field.name]!==value).map(row=>({id:row.id,before:row[field.name],after:value}))};
+      }
+      const previewNumeric=button("Preview matching integer update",()=>{
+        if(committing)return tell("Wait for the current save to finish.",true);
+        try{const proposal=numericProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,field:proposal.field.name,new_value:proposal.value,total_records:records.length,matching_records:proposal.matching_records,changes:proposal.changes,scope:numericScope.textContent+" Read-only snapshot, not an apply plan or authorization for a later update."},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Preview exceeds10 MiB.");download(text,spec.app_id+"-integer-update-preview.json","application/json");tell(`Previewed ${proposal.changes.length} exact integer changes. Nothing saved.`);}catch(error){tell("Integer preview refused: "+error.message,true);}
+      });
+      const updateNumeric=button("Set matching integer",async()=>{
+        if(committing)return tell("Wait for the current save to finish.",true);
+        if(dirty)return tell("Save or cancel editor changes before updating matching records.",true);
+        try{const proposal=numericProposal();if(!proposal.changes.length)return tell("Matching records already have this integer value.");
+          if(!confirm(`Set ${proposal.field.label} to ${proposal.value===null?"null":proposal.value} for ${proposal.changes.length} matching records across all pages?`))return;
+          const before=records.map(row=>({...row}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;panel.hidden=true;currentId=null;tell(`Updated ${proposal.changes.length} matching integer values. Undo last field update is available until another record change, import or reload.`);}
+        }catch(error){tell("Integer update refused: "+error.message,true);}
+      });
+      exportControls.append(numericField,numericValue,numericScope,previewNumeric,updateNumeric);
+    }
     const selectionPanel=node("details",undefined,"toolbar-group chosen-records"),selectionHeading=node("summary","Chosen record handoff"),selectionContent=node("div",undefined,"toolbar-group-content");
     const chooseLabel=node("label"," Choose individual records"),chooseMode=node("input");chooseMode.type="checkbox";chooseLabel.prepend(chooseMode);
     const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. No bulk update or deletion uses these choices.");
