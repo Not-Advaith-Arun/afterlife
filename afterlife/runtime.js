@@ -986,6 +986,28 @@
     app.append(header, status, message, toolbar, columnPanel, viewPanel, importReview, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
 
+    const reviewDialog=node("dialog",undefined,"record-review");reviewDialog.setAttribute("aria-labelledby","record-review-title");
+    const reviewTitle=node("h2","Read-only record review");reviewTitle.id="record-review-title";
+    const reviewNote=node("p","All stored fields shown, including hidden table columns. Unsaved editor inputs excluded. This review cannot save changes; closing it preserves your editor.");
+    const reviewPosition=node("p");reviewPosition.setAttribute("role","status");
+    const reviewValues=node("dl"),reviewActions=node("nav");reviewActions.setAttribute("aria-label","Read-only record navigation");
+    let reviewIDs=[],reviewIndex=0;
+    const previousReview=button("Previous review record",()=>{if(reviewIndex>0){reviewIndex--;renderReview();}}),nextReview=button("Next review record",()=>{if(reviewIndex+1<reviewIDs.length){reviewIndex++;renderReview();}}),closeReview=button("Close record review",()=>reviewDialog.close());
+    reviewActions.append(previousReview,nextReview,closeReview);reviewDialog.append(reviewTitle,reviewNote,reviewPosition,reviewValues,reviewActions);app.append(reviewDialog);
+    function renderReview(){
+      const record=records.find(row=>row.id===reviewIDs[reviewIndex]);reviewValues.replaceChildren();
+      if(!record){reviewPosition.textContent="This stored record is no longer available. Close and reopen the review.";previousReview.disabled=nextReview.disabled=true;return;}
+      reviewPosition.textContent=`Matching record ${reviewIndex+1} of ${reviewIDs.length} · ${record.id}`;
+      reviewValues.append(node("dt","Record ID"),node("dd",record.id));
+      for(const field of spec.fields){const value=record[field.name];reviewValues.append(node("dt",field.label),node("dd",field.type==="boolean"?(value?"Yes":"No"):String(value??"")));}
+      previousReview.disabled=reviewIndex===0;nextReview.disabled=reviewIndex+1===reviewIDs.length;
+    }
+    function openReview(id){
+      if(committing)return tell("Wait for the current save to finish.",true);
+      reviewIDs=currentView().map(row=>row.id);reviewIndex=reviewIDs.indexOf(id);if(reviewIndex<0)return tell("Record is outside the current view. Refresh the list.",true);
+      renderReview();reviewDialog.showModal();closeReview.focus();
+    }
+
     function openEditor(record = null, {duplicate = false} = {}) {
       if (committing) return tell("Wait for the current save to finish.", true);
       if (dirty && !confirm("Discard unsaved changes in the editor?")) return;
@@ -1109,7 +1131,7 @@
           const label=node("label"," Choose"),selected=node("input");selected.type="checkbox";selected.checked=chosenIDs.has(record.id);selected.setAttribute("aria-label","Choose record "+record.id);
           selected.addEventListener("change",()=>{if(selected.checked)chosenIDs.add(record.id);else chosenIDs.delete(record.id);refreshChosen();});label.prepend(selected);actions.append(label);
         }
-        actions.append(button("Edit", () => openEditor(record)), button("Duplicate", () => openEditor(record, {duplicate: true})), button("Delete", async () => {
+        actions.append(button("View", () => openReview(record.id)), button("Edit", () => openEditor(record)), button("Duplicate", () => openEditor(record, {duplicate: true})), button("Delete", async () => {
           if (!confirm("Delete this record? You can undo the most recent deletion.")) return;
           const index = records.findIndex(item => item.id === record.id);
           if (await commitOperation({op: "delete", id: record.id})) {

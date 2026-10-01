@@ -10,3 +10,6 @@ html[data-theme=dark]{color-scheme:dark;--bg:#131419;--surface:#1a1b22;--surface
 .toolbar-group{flex-basis:100%;width:100%;padding:12px 15px;border:1px solid var(--line);border-radius:9px;background:var(--surface2)}.toolbar-group summary{cursor:pointer;font-size:12px;font-weight:600}.toolbar-group-content{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px;padding-top:15px}.toolbar-group .count{margin:0}@media(max-width:650px){.toolbar-group-content>.sort-label,.toolbar-group-content>select{width:100%}.toolbar-group{padding:12px}}
 
 .saved-views label{display:grid;gap:6px;font-size:12px;max-width:100%}.saved-views input[type=file]{padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);max-width:100%}
+
+.record-review{width:min(38rem,calc(100vw - 2rem));max-height:85vh;overflow:auto;box-sizing:border-box;border:1px solid var(--line);border-radius:18px;padding:1.5rem;background:var(--surface);color:var(--ink)}
+.record-review::backdrop{background:#13162488}.record-review dd{margin:.35rem 0 1.1rem;white-space:pre-wrap;overflow-wrap:anywhere}.record-review dt{font-weight:600}.record-review nav{display:flex;gap:.5rem;flex-wrap:wrap}
