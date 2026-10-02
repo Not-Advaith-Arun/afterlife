@@ -139,6 +139,12 @@
     return rows.join("\r\n") + "\r\n";
   }
 
+  function exactIntegerTotals(rows,name){
+    const values=rows.map(row=>row[name]).filter(value=>value!==null),sum=values.reduce((total,value)=>total+BigInt(value),0n),ordered=values.slice().sort((a,b)=>a<b?-1:a>b?1:0),n=values.length;
+    const rational=(num,den)=>{let a=num<0n?-num:num,b=den;while(b){const r=a%b;a=b;b=r;}const g=a||1n;return den/g===1n?String(num/g):`${num/g}/${den/g}`;};
+    return {integer_values:n,empty_values:rows.length-n,sum:String(sum),min:n?ordered[0]:null,max:n?ordered[n-1]:null,mean:n?rational(sum,BigInt(n)):null,median:n?(n%2?String(ordered[Math.floor(n/2)]):rational(BigInt(ordered[n/2-1])+BigInt(ordered[n/2]),2n)):null};
+  }
+
   function printableRecords(spec, records, total, selectedColumns = null, chosen = false) {
     const escape = value => String(value).replace(/[&<>"']/g, character => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[character]);
     const columns = [{name:"id",label:"Record ID",type:"text"}, ...spec.fields.filter(field => selectedColumns === null || selectedColumns.has(field.name))];
@@ -829,6 +835,7 @@
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
       duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
       previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
+      refreshChosenTotals();
     }
     function exportChosen(kind){
       if(committing)return tell("Wait for the current save to finish.",true);
@@ -942,6 +949,18 @@
       });
       selectionContent.append(numericField,numericValue,numericScope,previewNumeric,updateNumeric);
     }
+    const chosenTotalsField=node("select");chosenTotalsField.setAttribute("aria-label","Summarize chosen field");const noChosenTotals=node("option","Choose field for totals…");noChosenTotals.value="";chosenTotalsField.append(noChosenTotals);
+    for(const field of spec.fields.filter(row=>["integer","boolean","select"].includes(row.type))){const option=node("option",field.label);option.value=field.name;chosenTotalsField.append(option);}
+    const chosenTotalsOutput=node("p");chosenTotalsOutput.setAttribute("role","status");chosenTotalsOutput.setAttribute("aria-label","Chosen field totals");
+    function chosenTotals(){
+      const field=spec.fields.find(row=>row.name===chosenTotalsField.value);if(!field)return null;
+      const selected=records.filter(row=>chosenIDs.has(row.id)),base={format:"afterlife-chosen-field-totals/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:field.name,kind:field.type,chosen_records:selected.length,total_records:records.length,scope:"Read-only current-tab totals over explicit chosen records across every filter/page; unsaved editor inputs excluded. Field/category labels and counts can be private. Integer sums/means/medians use exact integers and reduced fractions, never rounded estimates. No record IDs/text emitted, mutation, freshness proof or semantic conclusion; choices clear after any saved record change/import/undo."};
+      if(field.type==="integer")return {...base,...exactIntegerTotals(selected,field.name)};
+      const values=field.type==="boolean"?[true,false]:[...(field.required?[]:[""]),...field.options];return {...base,categories:values.map(value=>({value,count:selected.filter(row=>row[field.name]===value).length}))};
+    }
+    const exportChosenTotals=button("Download chosen totals",()=>{if(committing)return tell("Wait for the current save to finish.",true);const report=chosenTotals();if(!report||!chosenIDs.size)return;const text=JSON.stringify(report,null,2);if(new Blob([text]).size>MAX_BYTES)return tell("Chosen totals exceed10 MiB.",true);download(text,spec.app_id+"-chosen-totals.json","application/json");tell("Downloaded exact chosen field totals; no records saved or IDs/text exported.");});
+    function refreshChosenTotals(){const report=chosenTotals();exportChosenTotals.disabled=!report||!chosenIDs.size;chosenTotalsOutput.textContent=!report?"Choose a field to summarize explicit choices.":report.kind==="integer"?`${report.chosen_records} chosen; ${report.integer_values} integer values; ${report.empty_values} empty; sum ${report.sum}; min ${report.min===null?"none":report.min}; max ${report.max===null?"none":report.max}; mean ${report.mean===null?"none":report.mean}; median ${report.median===null?"none":report.median}.`:report.chosen_records+" chosen; "+report.categories.map(row=>(typeof row.value==="boolean"?(row.value?"Yes":"No"):row.value||"No value")+": "+row.count).join("; ");}
+    chosenTotalsField.addEventListener("change",refreshChosenTotals);selectionContent.append(chosenTotalsField,chosenTotalsOutput,exportChosenTotals);
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
@@ -1213,15 +1232,8 @@
       }
       integerSummary.hidden = !summaryField.value;
       if (summaryField.value) {
-        const values = visible.map(record => record[summaryField.value]).filter(value => value !== null);
-        const sum = values.reduce((total,value) => total + BigInt(value),0n);
-        const low = values.reduce((current,value) => current === null || value < current ? value : current,null);
-        const high = values.reduce((current,value) => current === null || value > current ? value : current,null);
-        const rational=(numerator,denominator)=>{let a=numerator<0n?-numerator:numerator,b=denominator;while(b){const remainder=a%b;a=b;b=remainder;}const common=a||1n;return denominator/common===1n?String(numerator/common):`${numerator/common}/${denominator/common}`;};
-        const ordered=values.slice().sort((one,two)=>one<two?-1:one>two?1:0),middle=Math.floor(ordered.length/2);
-        const mean=values.length?rational(sum,BigInt(values.length)):"none";
-        const median=values.length?(values.length%2?String(ordered[middle]):rational(BigInt(ordered[middle-1])+BigInt(ordered[middle]),2n)):"none";
-        integerSummary.textContent = `${values.length} integer values; ${visible.length-values.length} empty; sum ${sum}; min ${low === null ? "none" : low}; max ${high === null ? "none" : high}; mean ${mean}; median ${median}. All matching pages; exact integers and reduced rational fractions, never rounded decimal estimates.`;
+        const totals=exactIntegerTotals(visible,summaryField.value);
+        integerSummary.textContent = `${totals.integer_values} integer values; ${totals.empty_values} empty; sum ${totals.sum}; min ${totals.min===null?"none":totals.min}; max ${totals.max===null?"none":totals.max}; mean ${totals.mean===null?"none":totals.mean}; median ${totals.median===null?"none":totals.median}. All matching pages; exact integers and reduced rational fractions, never rounded decimal estimates.`;
       }
       pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
