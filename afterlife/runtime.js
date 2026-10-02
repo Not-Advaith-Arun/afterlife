@@ -833,7 +833,7 @@
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
-      duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      exportChosenSelection.disabled=duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
       previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
       refreshChosenTotals();
     }
@@ -872,6 +872,35 @@
         const before=records.map(row=>({...row}));if(await commit([...records,...copies],{resetPage:true})){lastDuplication={before,after:JSON.stringify(records)};undoDuplication.hidden=false;panel.hidden=true;currentId=null;tell(`Duplicated ${copies.length} explicitly chosen records with fresh IDs. Originals kept; undo chosen duplication is available.`);}
       }catch(error){tell("Duplication refused: "+error.message,true);}
     });
+    let pendingChosenSelection=null,chosenReadVersion=0;
+    const recordsHash=async text=>[...new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text)))].map(byte=>byte.toString(16).padStart(2,"0")).join("");
+    const exportChosenSelection=button("Download chosen selection",async()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      const baseline=JSON.stringify(records),chosenSnapshot=JSON.stringify([...chosenIDs]),ids=records.filter(row=>chosenIDs.has(row.id)).map(row=>row.id);if(!ids.length)return tell("Choose records explicitly first.",true);
+      try{const fingerprint=await recordsHash(baseline);if(JSON.stringify(records)!==baseline||JSON.stringify([...chosenIDs])!==chosenSnapshot)throw new Error("Records or choices changed while preparing. Try again.");
+        const text=JSON.stringify({format:"afterlife-chosen-selection/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,records_sha256:fingerprint,record_ids:ids},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Selection exceeds10 MiB.");download(text,spec.app_id+"-chosen-selection.json","application/json");tell("Downloaded private IDs-only selection for this exact current-tab record snapshot. No record fields saved; hash is a consistency guard, not authentication.");
+      }catch(error){tell("Selection export refused: "+error.message,true);}
+    });
+    const chosenSelectionLabel=node("label","Resume chosen selection"),chosenSelectionFile=node("input");chosenSelectionFile.type="file";chosenSelectionFile.accept=".json,application/json";chosenSelectionLabel.append(chosenSelectionFile);
+    const chosenSelectionReview=node("section"),chosenSelectionSummary=node("p");chosenSelectionReview.setAttribute("aria-label","Chosen selection import preview");chosenSelectionReview.hidden=true;
+    const useChosenSelection=button("Use imported choices",()=>{
+      if(!pendingChosenSelection)return;
+      if(committing||JSON.stringify(records)!==pendingChosenSelection.baseline||JSON.stringify([...chosenIDs])!==pendingChosenSelection.chosenSnapshot){pendingChosenSelection=null;chosenSelectionReview.hidden=true;return tell("Records or choices changed after preview. Reopen the selection; existing choices kept.",true);}
+      const ids=pendingChosenSelection.ids;chosenIDs.clear();for(const id of ids)chosenIDs.add(id);pendingChosenSelection=null;chosenSelectionReview.hidden=true;chosenReadVersion++;render();tell(`Resumed ${ids.length} explicit choices. Records unchanged; no import, deletion or save authorized.`);
+    });
+    const cancelChosenSelection=button("Cancel chosen selection import",()=>{pendingChosenSelection=null;chosenSelectionReview.hidden=true;chosenReadVersion++;chosenSelectionFile.value="";tell("Selection import cancelled. Existing choices kept.");});chosenSelectionReview.append(chosenSelectionSummary,useChosenSelection,cancelChosenSelection);
+    chosenSelectionFile.addEventListener("change",async()=>{
+      const file=chosenSelectionFile.files[0],request=++chosenReadVersion,baseline=JSON.stringify(records),chosenSnapshot=JSON.stringify([...chosenIDs]);pendingChosenSelection=null;chosenSelectionReview.hidden=true;if(!file)return;
+      try{if(committing)throw new Error("Wait for the current save to finish.");if(file.size>MAX_BYTES)throw new Error("Selection exceeds10 MiB.");const value=parseDataJSON(await file.text());if(request!==chosenReadVersion)return;
+        const fields=["format","app_id","spec_fingerprint","records_sha256","record_ids"];
+        if(!isObject(value)||Object.keys(value).length!==fields.length||!fields.every(key=>own(value,key))||value.format!=="afterlife-chosen-selection/v1"||value.app_id!==spec.app_id||value.spec_fingerprint!==payload.spec_fingerprint||typeof value.records_sha256!=="string"||!/^[a-f0-9]{64}$/.test(value.records_sha256))throw new Error("Selection belongs to a different app/spec or unsupported format.");
+        const ids=value.record_ids,known=new Set(records.map(row=>row.id));if(!Array.isArray(ids)||ids.length<1||ids.length>MAX_RECORDS||ids.some(id=>typeof id!=="string"||!known.has(id))||new Set(ids).size!==ids.length)throw new Error("Expected distinct existing record IDs.");
+        const fingerprint=await recordsHash(baseline);if(request!==chosenReadVersion)return;
+        if(fingerprint!==value.records_sha256||JSON.stringify(records)!==baseline||JSON.stringify([...chosenIDs])!==chosenSnapshot)throw new Error("Record snapshot or choices changed; inspect a fresh selection.");
+        pendingChosenSelection={ids:[...ids],baseline,chosenSnapshot};chosenSelectionSummary.textContent=`Replace current choices with ${ids.length} explicit IDs from this exact record snapshot. Record values are not included in this preview. Nothing saved or changed until Use imported choices.`;chosenSelectionReview.hidden=false;
+      }catch(error){if(request===chosenReadVersion)tell("Selection import refused: "+error.message+" Existing choices kept.",true);}finally{if(request===chosenReadVersion)chosenSelectionFile.value="";}
+    });
+    selectionContent.append(exportChosenSelection,chosenSelectionLabel,node("p","Explicit selection files contain private record IDs and an exact current-tab record hash. Resume only on matching app/spec and unchanged records; preview before replacing choices. They do not authorize record mutations, establish cross-tab freshness or change saved app data."),chosenSelectionReview);
     const chosenApp=button("Download chosen app",()=>saveHTML(false,true));
     const previewChosenDelete=button("Preview chosen deletion",()=>{
       if(committing)return tell("Wait for the current save to finish.",true);
@@ -1328,6 +1357,7 @@
               "Browser storage could not be updated. ";
           }
         }
+        pendingChosenSelection=null;chosenSelectionReview.hidden=true;chosenReadVersion++;
         lastDuplication=null;undoDuplication.hidden=true;
         records = checked;
         chosenIDs.clear();
