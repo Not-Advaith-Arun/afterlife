@@ -1069,18 +1069,44 @@
     const chosenTextPanel=node("fieldset",undefined,"toolbar-group"),chosenTextContent=node("div",undefined,"toolbar-group-content"),chosenTextField=node("select"),chosenTextValue=node("textarea");chosenTextPanel.append(node("legend","Set text on chosen records"),chosenTextContent);chosenTextField.setAttribute("aria-label","Chosen text field");chosenTextValue.setAttribute("aria-label","Chosen text value");chosenTextValue.rows=3;
     const noTextField=node("option","Choose text field…");noTextField.value="";chosenTextField.append(noTextField);const textFields=spec.fields.filter(row=>["text","multiline"].includes(row.type));
     for(const field of textFields){const option=node("option",field.label);option.value=field.name;chosenTextField.append(option);}
-    function chosenTextProposal(){const field=textFields.find(row=>row.name===chosenTextField.value);if(!field)throw new Error("Choose a text field first.");const value=chosenTextValue.value,selected=records.filter(row=>chosenIDs.has(row.id)),ids=new Set(selected.map(row=>row.id));if(!ids.size)throw new Error("Choose records explicitly first.");const next=records.map(row=>ids.has(row.id)?{...row,[field.name]:value}:row);prepareEnvelope(payload,{...envelope(),records:next},true);return {field,value,next,chosen_records:selected.length,changes:selected.filter(row=>row[field.name]!==value).map(row=>({id:row.id,before:row[field.name],after:value}))};}
+    const chosenTextMode=node("select"),chosenTextFind=node("textarea"),chosenTextScope=node("p");
+    chosenTextMode.setAttribute("aria-label","Chosen text operation");chosenTextFind.setAttribute("aria-label","Chosen literal to replace");chosenTextFind.rows=2;
+    for(const[value,text]of[["set","Set exact text"],["replace","Replace literal text"]]){const option=node("option",text);option.value=value;chosenTextMode.append(option);}
+    function chosenTextProposal(){
+      const field=textFields.find(row=>row.name===chosenTextField.value);if(!field)throw new Error("Choose a text field first.");
+      const value=chosenTextValue.value,find=chosenTextFind.value,replacing=chosenTextMode.value==="replace";
+      if(replacing&&!find.length)throw new Error("Supply nonempty literal text to replace; whitespace is matched exactly.");
+      const selected=records.filter(row=>chosenIDs.has(row.id)),ids=new Set(selected.map(row=>row.id));if(!ids.size)throw new Error("Choose records explicitly first.");
+      let occurrences=0;
+      const next=records.map(row=>{
+        if(!ids.has(row.id))return row;
+        if(!replacing)return {...row,[field.name]:value};
+        const parts=row[field.name].split(find);occurrences+=parts.length-1;
+        return {...row,[field.name]:parts.join(value)};
+      });
+      prepareEnvelope(payload,{...envelope(),records:next},true);
+      const changes=records.flatMap((row,index)=>ids.has(row.id)&&row[field.name]!==next[index][field.name]?[{id:row.id,before:row[field.name],after:next[index][field.name]}]:[]);
+      return {field,value,find,replacing,occurrences,next,chosen_records:selected.length,changes};
+    }
     const previewChosenText=button("Preview chosen text update",()=>{
       if(committing)return tell("Wait for the current save to finish.",true);
-      try{const proposal=chosenTextProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:proposal.field.name,new_value:proposal.value,total_records:records.length,chosen_records:proposal.chosen_records,changes:proposal.changes,scope:"Read-only exact text assignment for explicit chosen IDs across filters/pages. Private previous/new text included; no trimming, inferred values or unsaved editor inputs. No save or freshness proof. Later native update revalidates current choices/text and requires confirmation; this is not an apply plan."},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Text preview exceeds10 MiB.");download(text,spec.app_id+"-chosen-text-preview.json","application/json");tell(`Previewed ${proposal.changes.length} exact chosen text changes. Nothing saved; protect the private file.`);}catch(error){tell("Text preview refused: "+error.message,true);}
+      try{const proposal=chosenTextProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:proposal.field.name,operation:proposal.replacing?"replace_literal":"set",...(proposal.replacing?{find:proposal.find,replacement:proposal.value,occurrences:proposal.occurrences}:{new_value:proposal.value}),total_records:records.length,chosen_records:proposal.chosen_records,changes:proposal.changes,scope:"Read-only exact text assignment or literal replacement for explicit chosen IDs across filters/pages. Private previous/new text included; no trimming, inferred values or unsaved editor inputs. No save or freshness proof. Later native update revalidates current choices/text and requires confirmation; this is not an apply plan."},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Text preview exceeds10 MiB.");download(text,spec.app_id+"-chosen-text-preview.json","application/json");tell(`Previewed ${proposal.changes.length} exact chosen text changes. Nothing saved; protect the private file.`);}catch(error){tell("Text preview refused: "+error.message,true);}
     });
     const updateChosenText=button("Set chosen text",async()=>{
       if(committing)return tell("Wait for the current save to finish.",true);if(dirty)return tell("Save or cancel editor changes before updating chosen records.",true);
-      try{const proposal=chosenTextProposal();if(!proposal.changes.length)return tell("Chosen records already have this exact text. Nothing changed.");if(!confirm(`Set ${proposal.field.label} to the supplied exact text for ${proposal.changes.length} explicitly chosen records? Originals can be restored with Undo field update until another record change, import or reload.`))return;
+      try{const proposal=chosenTextProposal();if(!proposal.changes.length)return tell("Chosen records already have this exact text. Nothing changed.");const action=proposal.replacing?`Replace ${proposal.occurrences} exact nonoverlapping occurrences in ${proposal.field.label}`:`Set ${proposal.field.label} to the supplied exact text`;if(!confirm(`${action} for ${proposal.changes.length} explicitly chosen records? Originals can be restored with Undo field update until another record change, import or reload.`))return;
         const before=records.map(row=>({...row}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;panel.hidden=true;currentId=null;tell(`Updated ${proposal.changes.length} chosen text values. Other fields/records kept; undo last field update is available.`);}
       }catch(error){tell("Text update refused: "+error.message,true);}
     });
-    chosenTextField.addEventListener("change",refreshChosen);chosenTextContent.append(chosenTextField,chosenTextValue,node("p","Assign exactly the supplied text to explicit chosen records only. Empty values require an optional field. Native Unicode,10000-character and whole-file limits apply; preview includes private text. No text cleanup or automatic saving."),previewChosenText,updateChosenText);chosenTextPanel.hidden=!textFields.length;selectionContent.append(chosenTextPanel);
+    function refreshChosenTextMode(){
+      const replacing=chosenTextMode.value==="replace";chosenTextFind.hidden=!replacing;
+      chosenTextValue.setAttribute("aria-label",replacing?"Chosen text replacement":"Chosen text value");
+      previewChosenText.textContent=replacing?"Preview chosen text replacement":"Preview chosen text update";
+      updateChosenText.textContent=replacing?"Replace chosen text":"Set chosen text";
+      chosenTextScope.textContent=replacing?"Replace all exact, nonoverlapping literal matches in chosen text fields. Case, whitespace and Unicode are preserved; no regex, normalization or special replacement tokens. Empty replacement is allowed when the resulting field is valid. Preview includes private previous/new text; any invalid result refuses the entire update. Undo restores originals.":"Assign exactly the supplied text to explicit chosen records only. Empty values require an optional field. Native Unicode,10000-character and whole-file limits apply; preview includes private text. No text cleanup or automatic saving.";
+    }
+    chosenTextMode.addEventListener("change",refreshChosenTextMode);refreshChosenTextMode();
+    chosenTextField.addEventListener("change",refreshChosen);chosenTextContent.append(chosenTextMode,chosenTextField,chosenTextFind,chosenTextValue,chosenTextScope,previewChosenText,updateChosenText);chosenTextPanel.hidden=!textFields.length;selectionContent.append(chosenTextPanel);
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
