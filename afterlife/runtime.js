@@ -828,7 +828,7 @@
     }
     const selectionPanel=node("details",undefined,"toolbar-group chosen-records"),selectionHeading=node("summary","Chosen record handoff"),selectionContent=node("div",undefined,"toolbar-group-content");
     const chooseLabel=node("label"," Choose individual records"),chooseMode=node("input");chooseMode.type="checkbox";chooseLabel.prepend(chooseMode);
-    const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. Chosen-record deletion and field updates use only these choices; matching-view actions remain separate.");
+    const selectionScope=node("p","Choose records explicitly across filters and pages. Editable JSON/app downloads include all fields, including hidden fields, in original collection order. CSV defaults to all fields; its explicit column choice can omit hidden fields. Printable output uses its own column choice. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. Chosen-record deletion and field updates use only these choices; matching-view actions remain separate.");
     const chosenCount=node("p");chosenCount.setAttribute("aria-live","polite");
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
@@ -839,11 +839,14 @@
       refreshScopeChoices();
       previewChosenText.disabled=updateChosenText.disabled=!chosenIDs.size||!chosenTextField.value;
     }
+    const chosenCSVScopeLabel=node("label","Chosen CSV columns"),chosenCSVScope=node("select");chosenCSVScope.setAttribute("aria-label","Chosen CSV columns");
+    for(const[value,text]of[["all","All fields and Record ID"],["visible","Visible table columns and Record ID"]]){const option=node("option",text);option.value=value;chosenCSVScope.append(option);}chosenCSVScopeLabel.append(chosenCSVScope);
     function exportChosen(kind){
       if(committing)return tell("Wait for the current save to finish.",true);
       if(!chosenIDs.size)return tell("Choose a record first.",true);
       const selected=records.filter(record=>chosenIDs.has(record.id));
-      try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected),spec.app_id+"-chosen-data."+(kind==="json"?"json":"csv"),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records with all fields. Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
+      const projected=kind==="csv"&&chosenCSVScope.value==="visible";
+      try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected,projected?visibleFields:null),spec.app_id+(projected?"-chosen-visible-columns-text.csv":"-chosen-data."+(kind==="json"?"json":"csv")),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records in original order. ${projected?"Only visible table columns plus Record ID included; hidden fields omitted deliberately.":"All fields included."} ${kind==="csv"?"CSV text is apostrophe-prefixed; use JSON/app for exact editable full-field data. ":""}Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
     }
     const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
     const scopeChoices = node("fieldset", undefined, "toolbar-group");
@@ -1003,7 +1006,7 @@
       }catch(error){tell(error.message,true);}
     });
     chosenFieldChoice.hidden=previewChosenField.hidden=updateChosenField.hidden=!bulkFields.length;chosenFieldChoice.addEventListener("change",refreshChosen);
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,chosenPrint,previewChosenDuplicate,duplicateChosen,undoDuplication,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSVScopeLabel,chosenCSV,chosenApp,chosenPrint,previewChosenDuplicate,duplicateChosen,undoDuplication,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     if(integerFields.length){
       const numericField=node("select");numericField.setAttribute("aria-label","Chosen integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
       for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
