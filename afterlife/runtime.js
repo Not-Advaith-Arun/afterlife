@@ -836,6 +836,7 @@
       exportChosenSelection.disabled=duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
       previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
       refreshChosenTotals();
+      refreshScopeChoices();
       previewChosenText.disabled=updateChosenText.disabled=!chosenIDs.size||!chosenTextField.value;
     }
     function exportChosen(kind){
@@ -845,6 +846,58 @@
       try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected),spec.app_id+"-chosen-data."+(kind==="json"?"json":"csv"),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records with all fields. Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
     }
     const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
+    const scopeChoices = node("fieldset", undefined, "toolbar-group");
+    scopeChoices.append(node("legend", "Choose from the current view"));
+    const choiceScope = node("select"), choiceAction = node("select");
+    choiceScope.setAttribute("aria-label", "Record choice scope");
+    choiceAction.setAttribute("aria-label", "Record choice action");
+    for (const [value, text] of [["", "Choose a scope…"], ["page", "Current page"], ["matching", "All matching pages"]]) {
+      const option = node("option", text); option.value = value; choiceScope.append(option);
+    }
+    for (const [value, text] of [["add", "Add to chosen records"], ["remove", "Remove from chosen records"]]) {
+      const option = node("option", text); option.value = value; choiceAction.append(option);
+    }
+    const scopeChoiceSummary = node("p");
+    scopeChoiceSummary.setAttribute("aria-live", "polite");
+    function scopeChoiceProposal() {
+      const visible = currentView();
+      const page = Math.max(0, Math.min(currentPage, Math.max(0, Math.ceil(visible.length / pageSize) - 1)));
+      const scoped = choiceScope.value === "matching" ? visible : choiceScope.value === "page" ? visible.slice(page * pageSize, (page + 1) * pageSize) : [];
+      const add = choiceAction.value === "add";
+      return {scope: choiceScope.value, action: choiceAction.value, scoped_records: scoped.length,
+        changed_ids: scoped.filter(row => chosenIDs.has(row.id) !== add).map(row => row.id)};
+    }
+    function refreshScopeChoices() {
+      const proposal = scopeChoiceProposal();
+      previewScopeChoices.disabled = applyScopeChoices.disabled = !proposal.scope || !proposal.changed_ids.length;
+      scopeChoiceSummary.textContent = !proposal.scope ? "Choose a scope explicitly. Filters and page changes never alter choices automatically." :
+        `${proposal.scoped_records} current ${proposal.scope === "page" ? "page" : "matching"} records; ${proposal.changed_ids.length} choices would ${proposal.action === "add" ? "be added" : "be removed"}. Other choices are kept. No record values change.`;
+    }
+    const previewScopeChoices = button("Preview view choices", () => {
+      if (committing) return tell("Wait for the current save to finish.", true);
+      const proposal = scopeChoiceProposal(); if (!proposal.scope || !proposal.changed_ids.length) return;
+      const text = JSON.stringify({format: "afterlife-view-choice-preview/v1", app_id: spec.app_id,
+        spec_fingerprint: payload.spec_fingerprint, ...proposal, chosen_before: chosenIDs.size,
+        scope_note: "Private IDs-only snapshot of current in-tab scope and choices. No fields exported or choices changed. Not an apply plan; later action recomputes its current view and requires confirmation. Other choices and all records are kept."}, null, 2);
+      if (new Blob([text]).size > MAX_BYTES) return tell("Choice preview exceeds10 MiB.", true);
+      download(text, spec.app_id + "-view-choice-preview.json", "application/json");
+      tell("Downloaded private choice preview. No choices or records changed.");
+    });
+    const applyScopeChoices = button("Apply view choices", () => {
+      if (committing) return tell("Wait for the current save to finish.", true);
+      const proposal = scopeChoiceProposal(); if (!proposal.scope || !proposal.changed_ids.length) return;
+      if (!confirm(`${proposal.action === "add" ? "Add" : "Remove"} ${proposal.changed_ids.length} choices from ${proposal.scope === "page" ? "the current page" : "all current matching pages"}? Other choices and all record values stay unchanged. This only changes session choices, not saved records.`)) return;
+      for (const id of proposal.changed_ids) {
+        if (proposal.action === "add") chosenIDs.add(id); else chosenIDs.delete(id);
+      }
+      if (proposal.action === "add") chooseMode.checked = true;
+      render();
+      tell(`${proposal.action === "add" ? "Added" : "Removed"} ${proposal.changed_ids.length} explicit view choices. Other choices and records kept; choices clear after saved record changes/import/undo or reload.`);
+    });
+    choiceScope.addEventListener("change", refreshScopeChoices);
+    choiceAction.addEventListener("change", refreshScopeChoices);
+    scopeChoices.append(choiceScope, choiceAction, scopeChoiceSummary, previewScopeChoices, applyScopeChoices);
+    selectionContent.append(scopeChoices);
     const chosenPrint=button("Download chosen printable view",()=>{
       if(committing)return tell("Wait for the current save to finish.",true);
       if(!chosenIDs.size)return tell("Choose records explicitly first.",true);
