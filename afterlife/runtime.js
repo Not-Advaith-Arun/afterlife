@@ -1008,30 +1008,52 @@
       const numericField=node("select");numericField.setAttribute("aria-label","Chosen integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
       for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
       const numericValue=node("input");numericValue.type="text";numericValue.inputMode="numeric";numericValue.maxLength=MAX_INTEGER_INPUT_LENGTH;numericValue.setAttribute("aria-label","Chosen integer value");numericValue.placeholder="Exact integer; blank means null";
-      const numericScope=node("p","Explicit integer assignment for explicitly chosen records across filters/pages. Blank means null, allowed only for optional fields. No arithmetic or inferred values. Preview excludes unsaved editor inputs; private IDs/values are included in the file.","storage-note");
+      const numericMode=node("select");numericMode.setAttribute("aria-label","Chosen integer operation");
+      for(const [value,text]of [["set","Set one value"],["add","Add or subtract an amount"]]){const option=node("option",text);option.value=value;numericMode.append(option);}
+      const numericScope=node("p",undefined,"storage-note");
       function numericProposal(){
         const field=integerFields.find(row=>row.name===numericField.value);if(!field)throw new Error("Choose an integer field first.");
-        const raw=numericValue.value.trim();if(raw&&!exactIntegerInput(raw))throw new Error("Use an exactly represented safe integer or blank for null.");
+        const adjustment=numericMode.value==="add",raw=numericValue.value.trim();
+        if((adjustment&&!raw)||(raw&&!exactIntegerInput(raw)))throw new Error(adjustment?"Use an exactly represented safe integer amount; blank is not an adjustment.":"Use an exactly represented safe integer or blank for null.");
         const value=raw?Number(raw):null,chosen=records.filter(row=>chosenIDs.has(row.id)),ids=new Set(chosen.map(row=>row.id));
         if(!ids.size)throw new Error("Choose records explicitly first.");
-        const next=records.map(row=>ids.has(row.id)?{...row,[field.name]:value}:row);
+        const next=records.map(row=>{
+          if(!ids.has(row.id))return row;
+          if(!adjustment)return {...row,[field.name]:value};
+          if(!Number.isSafeInteger(row[field.name]))throw new Error("Every chosen value must be an integer. Empty values are not adjusted; nothing saved.");
+          const exact=BigInt(row[field.name])+BigInt(value);
+          if(exact<BigInt(Number.MIN_SAFE_INTEGER)||exact>BigInt(Number.MAX_SAFE_INTEGER))throw new Error("An adjusted value exceeds the safe integer range; nothing saved.");
+          return {...row,[field.name]:Number(exact)};
+        });
         prepareEnvelope(payload,{...envelope(),records:next},true);
-        return {field,value,next,chosen_records:chosen.length,changes:chosen.filter(row=>row[field.name]!==value).map(row=>({id:row.id,before:row[field.name],after:value}))};
+        const changes=records.flatMap((row,index)=>ids.has(row.id)&&row[field.name]!==next[index][field.name]?[{id:row.id,before:row[field.name],after:next[index][field.name]}]:[]);
+        return {field,value,next,adjustment,chosen_records:chosen.length,changes};
       }
       const previewNumeric=button("Preview chosen integer update",()=>{
         if(committing)return tell("Wait for the current save to finish.",true);
-        try{const proposal=numericProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:proposal.field.name,new_value:proposal.value,total_records:records.length,chosen_records:proposal.chosen_records,changes:proposal.changes,scope:numericScope.textContent+" Read-only snapshot, not an apply plan or authorization for a later update."},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Preview exceeds10 MiB.");download(text,spec.app_id+"-integer-update-preview.json","application/json");tell(`Previewed ${proposal.changes.length} exact integer changes. Nothing saved.`);}catch(error){tell("Integer preview refused: "+error.message,true);}
+        try{const proposal=numericProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:proposal.field.name,operation:proposal.adjustment?"add":"set",...(proposal.adjustment?{delta:proposal.value}:{new_value:proposal.value}),total_records:records.length,chosen_records:proposal.chosen_records,changes:proposal.changes,scope:numericScope.textContent+" Read-only snapshot, not an apply plan or authorization for a later update. Private IDs/values included; unsaved editor inputs excluded."},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Preview exceeds10 MiB.");download(text,spec.app_id+"-integer-update-preview.json","application/json");tell(`Previewed ${proposal.changes.length} exact integer changes. Nothing saved.`);}catch(error){tell("Integer preview refused: "+error.message,true);}
       });
       const updateNumeric=button("Set chosen integer",async()=>{
         if(committing)return tell("Wait for the current save to finish.",true);
         if(dirty)return tell("Save or cancel editor changes before updating chosen records.",true);
-        try{const proposal=numericProposal();if(!proposal.changes.length)return tell("Chosen records already have this integer value.");
-          if(!confirm(`Set ${proposal.field.label} to ${proposal.value===null?"null":proposal.value} for ${proposal.changes.length} chosen records across all pages?`))return;
-          const before=records.map(row=>({...row}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;panel.hidden=true;currentId=null;tell(`Updated ${proposal.changes.length} chosen integer values. Undo last field update is available until another record change, import or reload.`);}
+        try{const proposal=numericProposal();if(!proposal.changes.length)return tell("Chosen integer values already match this proposal. Nothing changed.");
+          const action=proposal.adjustment?`Add ${proposal.value} to ${proposal.field.label}`:`Set ${proposal.field.label} to ${proposal.value===null?"null":proposal.value}`;
+          if(!confirm(`${action} for ${proposal.changes.length} chosen records across all pages? Other records stay unchanged; undo is available until another record change, import or reload.`))return;
+          const before=records.map(row=>({...row}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;panel.hidden=true;currentId=null;tell(`${proposal.adjustment?"Adjusted":"Updated"} ${proposal.changes.length} chosen integer values. Undo last field update is available until another record change, import or reload.`);}
         }catch(error){tell("Integer update refused: "+error.message,true);}
       });
-      selectionContent.append(numericField,numericValue,numericScope,previewNumeric,updateNumeric);
+      function refreshNumericMode(){
+        const adjustment=numericMode.value==="add";
+        numericValue.setAttribute("aria-label",adjustment?"Chosen integer delta":"Chosen integer value");
+        numericValue.placeholder=adjustment?"Exact signed amount; negative subtracts":"Exact integer; blank means null";
+        previewNumeric.textContent=adjustment?"Preview chosen integer adjustment":"Preview chosen integer update";
+        updateNumeric.textContent=adjustment?"Adjust chosen integer":"Set chosen integer";
+        numericScope.textContent=adjustment?"Add the supplied exact integer amount to every chosen value across filters/pages. Negative amounts subtract. Empty values or any unsafe result refuse the whole update; no rounding, clipping or skipped records. Preview before saving; undo restores original values.":"Explicit integer assignment for chosen records across filters/pages. Blank means null, allowed only for optional fields. Preview before saving; undo restores original values.";
+      }
+      numericMode.addEventListener("change",refreshNumericMode);refreshNumericMode();
+      selectionContent.append(numericMode,numericField,numericValue,numericScope,previewNumeric,updateNumeric);
     }
+
     const chosenTotalsField=node("select");chosenTotalsField.setAttribute("aria-label","Summarize chosen field");const noChosenTotals=node("option","Choose field for totals…");noChosenTotals.value="";chosenTotalsField.append(noChosenTotals);
     for(const field of spec.fields.filter(row=>["integer","boolean","select"].includes(row.type))){const option=node("option",field.label);option.value=field.name;chosenTotalsField.append(option);}
     const chosenTotalsOutput=node("p");chosenTotalsOutput.setAttribute("role","status");chosenTotalsOutput.setAttribute("aria-label","Chosen field totals");
