@@ -139,6 +139,41 @@
     return rows.join("\r\n") + "\r\n";
   }
 
+  function parseCSVRecords(spec, text, textPolicy) {
+    if (!['literal','afterlife'].includes(textPolicy)) throw new Error('Choose the CSV text policy explicitly.');
+    if (new TextEncoder().encode(text).byteLength > MAX_BYTES) throw new Error('CSV exceeds10 MiB.');
+    if (text.charCodeAt(0)===0xfeff) text=text.slice(1);
+    const rows=[];let row=[],value='',quoted=false,closed=false,started=false;
+    const cell=()=>{row.push(value);if(row.length>33)throw new Error('CSV has too many columns.');value='';closed=false;started=false;};
+    const line=()=>{cell();rows.push(row);if(rows.length>10001)throw new Error('CSV exceeds10000 records.');row=[];};
+    for(let i=0;i<text.length;i++){
+      const c=text[i];
+      if(quoted){if(c==='"'){if(text[i+1]==='"'){value+='"';i++;}else{quoted=false;closed=true;}}else value+=c;continue;}
+      if(closed&&c!==','&&c!=='\r'&&c!=='\n')throw new Error('Unexpected characters after a quoted CSV cell.');
+      if(c==='"'){if(started||value.length)throw new Error('Unexpected quote in an unquoted CSV cell.');quoted=true;started=true;}
+      else if(c===',')cell();
+      else if(c==='\r'||c==='\n'){line();if(c==='\r'&&text[i+1]==='\n')i++;}
+      else{value+=c;started=true;}
+    }
+    if(quoted)throw new Error('Unterminated quoted CSV cell.');
+    if(row.length||value.length||started||closed)line();
+    const names=['id',...spec.fields.map(f=>f.name)],header=rows.shift();
+    if(!header||header.length!==names.length||new Set(header).size!==header.length||header.some(k=>!names.includes(k)))throw new Error('CSV needs id and every exact app field once. Projected, extra or duplicate columns cannot be imported.');
+    const fields=new Map(spec.fields.map(f=>[f.name,f]));
+    return validateRecords(spec,rows.map((cells,i)=>{
+      if(cells.length!==header.length)throw new Error(`CSV record ${i+1} has missing or extra cells.`);
+      const record=Object.create(null);
+      for(let n=0;n<header.length;n++){
+        const name=header[n],kind=name==='id'?'text':fields.get(name).type;let v=cells[n];
+        if(kind==='integer'){if(v==='')v=null;else{if(!/^-?(?:0|[1-9][0-9]*)$/.test(v)||v.length>17||!Number.isSafeInteger(Number(v)))throw new Error(`CSV record ${i+1}: ${name} needs an exact safe decimal integer or empty null.`);v=Number(v);}}
+        else if(kind==='boolean'){if(v!=='true'&&v!=='false')throw new Error(`CSV record ${i+1}: ${name} needs literal true or false.`);v=v==='true';}
+        else if(textPolicy==='afterlife'&&v!==''){if(!v.startsWith("'"))throw new Error(`CSV record ${i+1}: ${name} lacks the Afterlife text prefix.`);v=v.slice(1);}
+        record[name]=v;
+      }
+      return record;
+    }));
+  }
+
   function exactIntegerTotals(rows,name){
     const values=rows.map(row=>row[name]).filter(value=>value!==null),sum=values.reduce((total,value)=>total+BigInt(value),0n),ordered=values.slice().sort((a,b)=>a<b?-1:a>b?1:0),n=values.length;
     const rational=(num,den)=>{let a=num<0n?-num:num,b=den;while(b){const r=a%b;a=b;b=r;}const g=a||1n;return den/g===1n?String(num/g):`${num/g}/${den/g}`;};
@@ -317,6 +352,7 @@
     titleBlock.append(node("p", "Afterlife / Independent copy", "brand"), node("h1", spec.title),
       node("p", spec.description || "Your records, ready to use offline.", "description"));
     const fileActions = node("div", undefined, "file-actions");
+    let importReadVersion=0;
     const status = node("p", "Changes stay in this browser. Download a copy to keep them with your file.", "storage-note");
     status.id = "storage-status";
     status.setAttribute("role", "status");
@@ -368,6 +404,14 @@
           tell("CSV download requested. Text values have an apostrophe prefix; use JSON for exact data.");
         } catch (error) { tell(error.message, true); }
       }), button("Import JSON", () => fileInput.click()), fileInput);
+    const csvInput=node('input');csvInput.type='file';csvInput.accept='.csv,text/csv';csvInput.id='import-csv-file';csvInput.hidden=true;
+    const csvPolicy=node('select'),csvLabel=node('label','CSV text values'),csvOptions=[['','Choose text encoding…'],['literal','Literal text'],['afterlife','Afterlife protected export']];
+    csvPolicy.setAttribute('aria-label','CSV text values');for(const[value,label]of csvOptions){const option=node('option',label);option.value=value;csvPolicy.append(option);}csvLabel.append(csvPolicy);
+    const csvImport=button('Import CSV',()=>csvInput.click());csvImport.disabled=true;
+    csvPolicy.addEventListener('change',()=>{csvImport.disabled=!csvPolicy.value;importReadVersion++;if(pendingImport?.sourceFormat==='csv'){pendingImport=null;importReview.hidden=true;tell('CSV text policy changed. Choose the file again to review it.');}});
+    const csvControls=node('details',undefined,'toolbar-group csv-import');csvControls.append(node('summary','Import typed CSV'),csvLabel,csvImport,csvInput,node('p','All columns required. Choose literal text or remove one Afterlife export prefix. Spreadsheet transformations cannot be recovered. Review before applying; CSV carries no app identity.'));
+    fileActions.append(csvControls);
+
     const theme = button(document.documentElement.dataset.theme === "dark" ? "Light theme" : "Dark theme", () => {
       const dark = document.documentElement.dataset.theme !== "dark";
       document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -1201,7 +1245,7 @@
     const importIDs = node("pre");
     importChanges.append(node("summary", "Review affected record IDs"), importIDs);
     const cancelImport = button("Cancel import", () => {
-      pendingImport = null; importReview.hidden = true; tell("Import cancelled. Current records kept.");
+      importReadVersion++;pendingImport = null; importReview.hidden = true; tell("Import cancelled. Current records kept.");
     });
     async function applyPendingImport(addOnly = false) {
       if (!pendingImport) return;
@@ -1582,28 +1626,32 @@
         }
       }
     });
-    fileInput.addEventListener("change", async () => {
-      const file = fileInput.files[0];
-      fileInput.value = "";
+    async function readImport(file, sourceFormat='json', textPolicy=null) {
       if (!file) return;
+      if(committing||stale)return tell(stale?conflictWarning:'Wait for the current save before reviewing an import.',true);
+      const request=++importReadVersion,baseline=JSON.stringify(records);
       pendingImport = null; importReview.hidden = true;
       try {
         if (file.size > MAX_BYTES) throw new Error("Import exceeds 10 MiB.");
-        const imported = validateEnvelope(payload, parseDataJSON(await file.text()));
+        const text=await file.text();
+        if(request!==importReadVersion)return;
+        if(stale||committing||JSON.stringify(records)!==baseline)throw new Error('Records changed while reading. Choose the file again.');
+        const imported = sourceFormat==='csv'?validateEnvelope(payload,{format:'afterlife-data/v1',app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,records:parseCSVRecords(spec,text,textPolicy)}):validateEnvelope(payload, parseDataJSON(text));
         const differences = compareImport(spec, records, imported);
         const currentIDs = new Set(records.map(row => row.id));
         const incomingIDs = new Set(imported.map(row => row.id));
         const previousOrder = records.filter(row => incomingIDs.has(row.id)).map(row => row.id);
         const incomingOrder = imported.filter(row => currentIDs.has(row.id)).map(row => row.id);
         const reordered = JSON.stringify(previousOrder) !== JSON.stringify(incomingOrder);
-        pendingImport = {records: imported, baseline: JSON.stringify(records)};
-        importSummary.textContent = `Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged.${reordered ? " Retained record order will change." : ""} Export first to keep the current copy.`;
+        pendingImport = {records: imported, baseline, sourceFormat};
+        importSummary.textContent = (sourceFormat==='csv'?'CSV interpreted with explicit '+textPolicy+' text policy and this app contract. CSV has no embedded app identity. ':'')+`Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged.${reordered ? " Retained record order will change." : ""} Export first to keep the current copy.`;
         const previous = new Map(records.map(row => [row.id, row]));
         const changedIDs = new Set(differences.changed);
         const changedFields = imported.filter(row => changedIDs.has(row.id)).map(row => ({id: row.id,
           fields: spec.fields.filter(field => previous.get(row.id)[field.name] !== row[field.name]).map(field => field.name).sort()}));
         importIDs.textContent = JSON.stringify({...differences, changed_fields: changedFields}, null, 2);
         pendingImport.review = {format: "afterlife-import-summary/v1", app_id: spec.app_id,
+          ...(sourceFormat==='csv'?{source_format:'csv',csv_text_policy:textPolicy}:{}),
           spec_fingerprint: payload.spec_fingerprint,
           counts: {current: records.length, incoming: imported.length, added: differences.added.length,
             removed: differences.removed.length, changed: differences.changed.length, unchanged: differences.unchanged.length},
@@ -1617,8 +1665,10 @@
         importReview.hidden = false;
         applyImport.focus();
         tell("Import preview ready. Current records have not changed.");
-      } catch (error) { tell("Import failed: " + error.message, true); }
-    });
+      } catch (error) { if(request===importReadVersion)tell("Import failed: " + error.message, true); }
+    }
+    fileInput.addEventListener('change',()=>{const file=fileInput.files[0];fileInput.value='';readImport(file);});
+    csvInput.addEventListener('change',()=>{const file=csvInput.files[0];csvInput.value='';readImport(file,'csv',csvPolicy.value);});
     search.addEventListener("input", () => { currentPage = 0; render(); });
     window.addEventListener("storage", event => {
       if (!blockedStorage && (event.key === payload.storage_key || event.key === null)) {
@@ -1635,7 +1685,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, compareImport, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
+    module.exports = {parseCSVRecords, validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, compareImport, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
   }
   if (typeof document !== "undefined") boot();
 })();
