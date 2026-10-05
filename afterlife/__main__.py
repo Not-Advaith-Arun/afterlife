@@ -36,6 +36,29 @@ def import_csv_main(argv):
         print('afterlife: '+str(exc),file=sys.stderr);return 2
 
 
+def patch_csv_main(argv):
+    parser=argparse.ArgumentParser(description="Patch only supplied CSV columns for explicit existing IDs in a complete matching backup. Omitted fields/order/other records stay; unknown or duplicate IDs refuse all. Native review and separate guarded restoration remain explicit.")
+    parser.add_argument("spec",type=Path);parser.add_argument("current",type=Path);parser.add_argument("csv",type=Path)
+    parser.add_argument("--text-policy",choices=("literal","afterlife"),required=True)
+    parser.add_argument("-o","--output",type=Path,required=True);parser.add_argument("--review",type=Path);parser.add_argument("--force",action="store_true")
+    args=parser.parse_args(argv)
+    try:
+        targets=[args.output]+([args.review]if args.review else[]);inputs=[args.spec,args.current,args.csv]
+        if any(_same_file(a,b)for i,a in enumerate(targets)for b in targets[i+1:])or any(_same_file(a,b)for a in targets for b in inputs):raise CompileError('patch outputs must be distinct and cannot overwrite source inputs')
+        for target in targets:
+            if target.is_symlink()or target.exists()and not target.is_file():raise CompileError('patch outputs must be regular files, not symbolic links')
+            if target.exists()and not args.force:raise CompileError('patch output exists; choose another path or pass --force')
+            if not target.parent.is_dir():raise CompileError('patch output directory must exist')
+        from .csv_patch import patch_csv
+        from .compiler import _canonical
+        incoming,review=patch_csv(load_json(args.spec),load_json(args.current),args.csv,text_policy=args.text_policy)
+        write_output(args.output,_canonical(incoming)+"\n",force=args.force)
+        if args.review:write_output(args.review,json.dumps(review,indent=2)+"\n",force=args.force)
+        print(json.dumps({'format':'afterlife-csv-patch-receipt/v1','counts':review['counts'],'scope':'Complete current backup and all typed partial CSV rows validated before output. Only supplied columns for distinct existing IDs change; other values and original order stay. Private output backup contains record values; optional metadata review is compatible with separate from-export --review/--against. Outputs are atomic per file, not a multi-file transaction or lock on later inputs. CSV text policy is explicit; spreadsheet transformations cannot be recovered. No current app/browser records changed.'}))
+        return 0
+    except (CompileError,OSError,ValueError)as exc:print('afterlife: '+str(exc),file=sys.stderr);return 2
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "showcase":
@@ -47,6 +70,8 @@ def main(argv=None):
         return verify_artifact_main(argv[1:])
     if argv and argv[0] == "audit-python":
         return audit_main(argv[1:])
+    if argv and argv[0] == "patch-csv":
+        return patch_csv_main(argv[1:])
     if argv and argv[0] == "import-csv":
         return import_csv_main(argv[1:])
     if argv and argv[0] == "review-export":
@@ -57,7 +82,7 @@ def main(argv=None):
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample, 'import-csv' for an explicitly typed complete backup, or 'patch-csv' for guarded partial-column backup edits. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")
