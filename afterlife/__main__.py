@@ -17,6 +17,25 @@ def _same_file(first, second):
     return first.exists() and second.exists() and first.samefile(second)
 
 
+def import_csv_main(argv):
+    parser=argparse.ArgumentParser(description="Convert complete explicitly typed CSV into a native backup, never merge current records. Literal policy preserves all text; afterlife policy removes exactly one required export prefix from every nonempty text/id/select cell. No inference of spreadsheet transformations.")
+    parser.add_argument("spec",type=Path)
+    parser.add_argument("csv",type=Path)
+    parser.add_argument("--text-policy",choices=("literal","afterlife"),required=True)
+    parser.add_argument("-o","--output",type=Path,required=True)
+    parser.add_argument("--force",action="store_true")
+    args=parser.parse_args(argv)
+    try:
+        if any(_same_file(args.output,p)for p in (args.spec,args.csv)):raise CompileError('CSV backup output cannot overwrite source inputs')
+        from .csv_import import import_csv
+        result=import_csv(load_json(args.spec),args.csv,text_policy=args.text_policy)
+        write_output(args.output,json.dumps(result,ensure_ascii=False,sort_keys=True,separators=(',',':'))+"\n",force=args.force)
+        print(json.dumps({'format':'afterlife-csv-import-receipt/v1','records':len(result['records']),'text_policy':args.text_policy,'scope':'All exact columns/typed values validated before native backup output. No current browser data merged or HTML rebuilt. CSV has no app identity or authenticity; the caller explicitly supplies its contract and literal/prefixed text policy. Spreadsheet coercion, removed leading zeros or formulas cannot be recovered. Use separate from-export or guarded browser import to inspect/apply. Private backup contains record values; receipt omits them.'}))
+        return 0
+    except (CompileError,OSError,ValueError)as exc:
+        print('afterlife: '+str(exc),file=sys.stderr);return 2
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "showcase":
@@ -28,6 +47,8 @@ def main(argv=None):
         return verify_artifact_main(argv[1:])
     if argv and argv[0] == "audit-python":
         return audit_main(argv[1:])
+    if argv and argv[0] == "import-csv":
+        return import_csv_main(argv[1:])
     if argv and argv[0] == "review-export":
         return review_export_main(argv[1:])
     from_export = bool(argv and argv[0] == "from-export")
