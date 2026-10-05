@@ -882,6 +882,7 @@
       refreshChosenTotals();
       refreshScopeChoices();
       previewChosenText.disabled=updateChosenText.disabled=!chosenIDs.size||!chosenTextField.value;
+      refreshChosenImportControls();
     }
     const chosenCSVScopeLabel=node("label","Chosen CSV columns"),chosenCSVScope=node("select");chosenCSVScope.setAttribute("aria-label","Chosen CSV columns");
     for(const[value,text]of[["all","All fields and Record ID"],["visible","Visible table columns and Record ID"]]){const option=node("option",text);option.value=value;chosenCSVScope.append(option);}chosenCSVScopeLabel.append(chosenCSVScope);
@@ -1269,6 +1270,24 @@
     }
     const applyImport = button("Apply import", () => applyPendingImport(false), "primary");
     const addImport = button("Add new records", () => applyPendingImport(true));
+    const chosenImportNote=node('p');
+    function chosenImportProposal(){
+      if(!pendingImport||stale||committing||JSON.stringify(records)!==pendingImport.baseline)throw new Error('Import review is stale. Choose the file again.');
+      if(!chosenIDs.size)throw new Error('Choose existing records first.');
+      const incoming=new Map(pendingImport.records.map(r=>[r.id,r]));
+      if([...chosenIDs].some(id=>!incoming.has(id)))throw new Error('Every chosen record must occur in the incoming file. Nothing is skipped.');
+      const changes=records.filter(r=>chosenIDs.has(r.id)&&JSON.stringify(r)!==JSON.stringify(incoming.get(r.id))).map(r=>({id:r.id,before:r,after:incoming.get(r.id)}));
+      const next=validateEnvelope(payload,{...envelope(),records:records.map(r=>chosenIDs.has(r.id)?incoming.get(r.id):r)});
+      return{next,changes,chosen_records:chosenIDs.size,ignored_incoming_records:pendingImport.records.length-chosenIDs.size};
+    }
+    const previewChosenImport=button('Preview chosen import values',()=>{if(dirty)return tell('Save or cancel editor changes before reviewing chosen import values.',true);try{const proposal=chosenImportProposal();download(exportDataJSON({format:'afterlife-chosen-import-preview/v1',app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,chosen_records:proposal.chosen_records,ignored_incoming_records:proposal.ignored_incoming_records,changes:proposal.changes,scope:'Private before/after values for changed explicitly chosen existing records only. Full incoming file validated first; every chosen ID must exist there. Unchosen current records and new incoming IDs will be kept/ignored respectively. This is not an importable backup or apply authorization. Protect private values; current choices and complete records are rechecked before a separate confirmed save.'}),spec.app_id+'-private-chosen-import.json','application/json');tell('Downloaded private chosen import preview. Current records kept.');}catch(error){tell('Chosen import refused: '+error.message,true);}});
+    const applyChosenImport=button('Update chosen existing records',async()=>{if(dirty)return tell('Save or cancel editor changes before updating chosen records.',true);try{const proposal=chosenImportProposal();if(!proposal.changes.length)return tell('Chosen existing records already match the incoming values. Nothing changed.');if(!confirm(`Replace values for ${proposal.changes.length} explicitly chosen existing records from the reviewed file? Unchosen records stay; no new IDs are added. Undo field update can restore the current copy.`))return;const before=records.map(r=>({...r}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;pendingImport=null;importReview.hidden=true;panel.hidden=true;currentId=null;tell(`Updated ${proposal.changes.length} chosen existing records from import. Unchosen records kept and new incoming IDs ignored; undo is available.`);}}catch(error){tell('Chosen import refused: '+error.message,true);}});
+    function refreshChosenImportControls(){
+      let missing=0;if(pendingImport){const ids=new Set(pendingImport.records.map(r=>r.id));missing=[...chosenIDs].filter(id=>!ids.has(id)).length;}
+      previewChosenImport.disabled=applyChosenImport.disabled=!pendingImport||!chosenIDs.size||missing>0;
+      chosenImportNote.textContent=`${chosenIDs.size} current records explicitly chosen; ${missing} missing from incoming file. This mode only replaces chosen existing values, preserves unchosen records and ignores new IDs. Every chosen ID must be present. Private value preview and confirmed save are separate.`;
+    }
+
     const exportImportReview = button("Export review JSON", () => {
       if (!pendingImport || committing) return;
       if (stale || JSON.stringify(records) !== pendingImport.baseline) {
@@ -1277,7 +1296,7 @@
       download(JSON.stringify(pendingImport.review, null, 2), spec.app_id + "-import-review.json", "application/json");
       tell("Review summary download requested. Record values are excluded; export data separately to keep a backup.");
     });
-    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, addImport, exportImportReview, cancelImport);
+    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, addImport, chosenImportNote, previewChosenImport, applyChosenImport, exportImportReview, cancelImport);
     const layout = node("div", undefined, "workspace");
     const list = node("section", undefined, "records");
     list.id = "records";
@@ -1659,6 +1678,7 @@
           retained_order_changed: reordered,
           scope: "Metadata-only draft preview. IDs and field names included; record values excluded. This is not a data backup, authenticated snapshot, or guarded-restoration report. Separate requests may observe different records; review again before applying."};
         addImport.disabled = differences.changed.length > 0 || differences.added.length === 0;
+        refreshChosenImportControls();
         importSummary.append(node("span", differences.changed.length ?
           ` Add mode unavailable: ${differences.changed.length} existing IDs have different values.` :
           ` Add mode keeps all current records and adds ${differences.added.length} new IDs; unchanged shared IDs are skipped.`));
