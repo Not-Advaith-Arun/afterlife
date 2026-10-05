@@ -139,7 +139,7 @@
     return rows.join("\r\n") + "\r\n";
   }
 
-  function parseCSVRecords(spec, text, textPolicy) {
+  function parseCSVRecords(spec, text, textPolicy, partial = false) {
     if (!['literal','afterlife'].includes(textPolicy)) throw new Error('Choose the CSV text policy explicitly.');
     if (new TextEncoder().encode(text).byteLength > MAX_BYTES) throw new Error('CSV exceeds10 MiB.');
     if (text.charCodeAt(0)===0xfeff) text=text.slice(1);
@@ -158,9 +158,9 @@
     if(quoted)throw new Error('Unterminated quoted CSV cell.');
     if(row.length||value.length||started||closed)line();
     const names=['id',...spec.fields.map(f=>f.name)],header=rows.shift();
-    if(!header||header.length!==names.length||new Set(header).size!==header.length||header.some(k=>!names.includes(k)))throw new Error('CSV needs id and every exact app field once. Projected, extra or duplicate columns cannot be imported.');
+    if(!header||!header.includes('id')||new Set(header).size!==header.length||header.some(k=>!names.includes(k))||(partial?header.length<2:header.length!==names.length))throw new Error('CSV needs id and exact distinct app fields. Full import needs every column; patch needs at least one value column.');
     const fields=new Map(spec.fields.map(f=>[f.name,f]));
-    return validateRecords(spec,rows.map((cells,i)=>{
+    const decoded=rows.map((cells,i)=>{
       if(cells.length!==header.length)throw new Error(`CSV record ${i+1} has missing or extra cells.`);
       const record=Object.create(null);
       for(let n=0;n<header.length;n++){
@@ -171,7 +171,17 @@
         record[name]=v;
       }
       return record;
-    }));
+    });
+    return partial?decoded:validateRecords(spec,decoded);
+  }
+
+  function parseCSVPatch(spec, records, text, textPolicy) {
+    const current=validateRecords(spec,records),known=new Set(current.map(r=>r.id)),patches=new Map();
+    for(const row of parseCSVRecords(spec,text,textPolicy,true)){
+      if(!known.has(row.id)||patches.has(row.id))throw new Error('Every CSV patch ID must be distinct and already exist. No IDs added, renamed or skipped.');
+      patches.set(row.id,row);
+    }
+    return validateRecords(spec,current.map(r=>patches.has(r.id)?{...r,...patches.get(r.id)}:r));
   }
 
   function exactIntegerTotals(rows,name){
@@ -407,9 +417,9 @@
     const csvInput=node('input');csvInput.type='file';csvInput.accept='.csv,text/csv';csvInput.id='import-csv-file';csvInput.hidden=true;
     const csvPolicy=node('select'),csvLabel=node('label','CSV text values'),csvOptions=[['','Choose text encoding…'],['literal','Literal text'],['afterlife','Afterlife protected export']];
     csvPolicy.setAttribute('aria-label','CSV text values');for(const[value,label]of csvOptions){const option=node('option',label);option.value=value;csvPolicy.append(option);}csvLabel.append(csvPolicy);
-    const csvImport=button('Import CSV',()=>csvInput.click());csvImport.disabled=true;
-    csvPolicy.addEventListener('change',()=>{csvImport.disabled=!csvPolicy.value;importReadVersion++;if(pendingImport?.sourceFormat==='csv'){pendingImport=null;importReview.hidden=true;tell('CSV text policy changed. Choose the file again to review it.');}});
-    const csvControls=node('details',undefined,'toolbar-group csv-import');csvControls.append(node('summary','Import typed CSV'),csvLabel,csvImport,csvInput,node('p','All columns required. Choose literal text or remove one Afterlife export prefix. Spreadsheet transformations cannot be recovered. Review before applying; CSV carries no app identity.'));
+    const csvImport=button('Import CSV',()=>csvInput.click());csvImport.disabled=true;const patchCSVInput=node('input');patchCSVInput.type='file';patchCSVInput.accept='.csv,text/csv';patchCSVInput.id='patch-csv-file';patchCSVInput.hidden=true;const patchCSVImport=button('Review CSV patch',()=>patchCSVInput.click());patchCSVImport.disabled=true;
+    csvPolicy.addEventListener('change',()=>{csvImport.disabled=patchCSVImport.disabled=!csvPolicy.value;importReadVersion++;if(pendingImport?.sourceFormat?.startsWith('csv')){pendingImport=null;importReview.hidden=true;tell('CSV text policy changed. Choose the file again to review it.');}});
+    const csvControls=node('details',undefined,'toolbar-group csv-import');csvControls.append(node('summary','Import typed CSV'),csvLabel,csvImport,csvInput,patchCSVImport,patchCSVInput,node('p','Full import requires all columns. A patch needs id and explicit value columns for distinct existing IDs; omitted fields and other records stay. Choose literal text or remove one Afterlife export prefix. Spreadsheet transformations cannot be recovered. Review before applying; CSV carries no app identity.'));
     fileActions.append(csvControls);
 
     const theme = button(document.documentElement.dataset.theme === "dark" ? "Light theme" : "Dark theme", () => {
@@ -1261,11 +1271,11 @@
       const existingIDs = new Set(records.map(record => record.id));
       const added = pendingImport.records.filter(record => !existingIDs.has(record.id));
       if (addOnly && !added.length) return tell("No new record IDs to add. Current records kept.");
-      const incoming = addOnly ? [...records, ...added] : pendingImport.records;
+      const incoming = addOnly ? [...records, ...added] : pendingImport.records;const patchBefore=!addOnly&&pendingImport.sourceFormat==='csv-patch'?records.map(r=>({...r})):null,patchedCount=pendingImport.review.counts.changed;
       if (await commit(incoming, {resetPage: true})) {
-        lastDuplication=null;undoDuplication.hidden=true;lastDeleted = null; undo.hidden = true; lastFieldUpdate = null; undoFieldUpdate.hidden = true; dirty = false; panel.hidden = true; currentId = null;
+        lastDuplication=null;undoDuplication.hidden=true;lastDeleted = null; undo.hidden = true; lastFieldUpdate = patchBefore?{before:patchBefore,after:JSON.stringify(records)}:null; undoFieldUpdate.hidden = !patchBefore; dirty = false; panel.hidden = true; currentId = null;
         pendingImport = null; importReview.hidden = true;
-        tell(addOnly ? `Added ${added.length} new records. Existing records kept.` : `Imported ${incoming.length} records.`);
+        tell(patchBefore?`Applied CSV patch to ${patchedCount} records. Omitted fields and other records kept; undo is available.`:addOnly ? `Added ${added.length} new records. Existing records kept.` : `Imported ${incoming.length} records.`);
       }
     }
     const applyImport = button("Apply import", () => applyPendingImport(false), "primary");
@@ -1655,7 +1665,7 @@
         const text=await file.text();
         if(request!==importReadVersion)return;
         if(stale||committing||JSON.stringify(records)!==baseline)throw new Error('Records changed while reading. Choose the file again.');
-        const imported = sourceFormat==='csv'?validateEnvelope(payload,{format:'afterlife-data/v1',app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,records:parseCSVRecords(spec,text,textPolicy)}):validateEnvelope(payload, parseDataJSON(text));
+        const imported = sourceFormat==='csv-patch'?validateEnvelope(payload,{...envelope(),records:parseCSVPatch(spec,records,text,textPolicy)}):sourceFormat==='csv'?validateEnvelope(payload,{format:'afterlife-data/v1',app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,records:parseCSVRecords(spec,text,textPolicy)}):validateEnvelope(payload, parseDataJSON(text));
         const differences = compareImport(spec, records, imported);
         const currentIDs = new Set(records.map(row => row.id));
         const incomingIDs = new Set(imported.map(row => row.id));
@@ -1663,14 +1673,14 @@
         const incomingOrder = imported.filter(row => currentIDs.has(row.id)).map(row => row.id);
         const reordered = JSON.stringify(previousOrder) !== JSON.stringify(incomingOrder);
         pendingImport = {records: imported, baseline, sourceFormat};
-        importSummary.textContent = (sourceFormat==='csv'?'CSV interpreted with explicit '+textPolicy+' text policy and this app contract. CSV has no embedded app identity. ':'')+`Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged.${reordered ? " Retained record order will change." : ""} Export first to keep the current copy.`;
+        importSummary.textContent = (sourceFormat.startsWith('csv')?(sourceFormat==='csv-patch'?'CSV patch preserves omitted fields/order and unmentioned records. ':'')+'CSV interpreted with explicit '+textPolicy+' text policy and this app contract; CSV has no embedded app identity. ':'')+`Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged.${reordered ? " Retained record order will change." : ""} Export first to keep the current copy.`;
         const previous = new Map(records.map(row => [row.id, row]));
         const changedIDs = new Set(differences.changed);
         const changedFields = imported.filter(row => changedIDs.has(row.id)).map(row => ({id: row.id,
           fields: spec.fields.filter(field => previous.get(row.id)[field.name] !== row[field.name]).map(field => field.name).sort()}));
         importIDs.textContent = JSON.stringify({...differences, changed_fields: changedFields}, null, 2);
         pendingImport.review = {format: "afterlife-import-summary/v1", app_id: spec.app_id,
-          ...(sourceFormat==='csv'?{source_format:'csv',csv_text_policy:textPolicy}:{}),
+          ...(sourceFormat.startsWith('csv')?{source_format:sourceFormat,csv_text_policy:textPolicy}:{}),
           spec_fingerprint: payload.spec_fingerprint,
           counts: {current: records.length, incoming: imported.length, added: differences.added.length,
             removed: differences.removed.length, changed: differences.changed.length, unchanged: differences.unchanged.length},
@@ -1689,6 +1699,7 @@
     }
     fileInput.addEventListener('change',()=>{const file=fileInput.files[0];fileInput.value='';readImport(file);});
     csvInput.addEventListener('change',()=>{const file=csvInput.files[0];csvInput.value='';readImport(file,'csv',csvPolicy.value);});
+    patchCSVInput.addEventListener('change',()=>{const file=patchCSVInput.files[0];patchCSVInput.value='';readImport(file,'csv-patch',csvPolicy.value);});
     search.addEventListener("input", () => { currentPage = 0; render(); });
     window.addEventListener("storage", event => {
       if (!blockedStorage && (event.key === payload.storage_key || event.key === null)) {
@@ -1705,7 +1716,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {parseCSVRecords, validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, compareImport, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
+    module.exports = {parseCSVPatch,parseCSVRecords, validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, compareImport, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
   }
   if (typeof document !== "undefined") boot();
 })();
