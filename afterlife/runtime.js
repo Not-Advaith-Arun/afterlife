@@ -1298,6 +1298,12 @@
       chosenImportNote.textContent=`${chosenIDs.size} current records explicitly chosen; ${missing} missing from incoming file. This mode only replaces chosen existing values, preserves unchosen records and ignores new IDs. Every chosen ID must be present. Private value preview and confirmed save are separate.`;
     }
 
+    const exportProposedBackup=button('Download proposed backup',()=>{
+      if(!pendingImport||committing)return tell('Prepare an import review and wait for any current save first.',true);
+      if(stale||JSON.stringify(records)!==pendingImport.baseline)return tell('Review is stale. Choose the file again before exporting a proposed backup.',true);
+      try{const value={...envelope(),records:pendingImport.records};value.records=validateEnvelope(payload,value);download(exportDataJSON(value),spec.app_id+'-private-proposed-backup.json','application/json');tell('Downloaded the full private proposed backup without applying it. All proposed record values are included; unsaved editor inputs excluded. Current records kept.');}catch(error){tell('Proposed backup refused: '+error.message,true);}
+    });
+    const proposedBackupNote=node('p','Proposed backup download contains every proposed record value. For CSV patches it includes unchanged private fields and unmentioned records too. Protect the full private file; this does not apply it or include unsaved editor inputs. Native review and guarded rebuild remain separate.');
     const exportImportReview = button("Export review JSON", () => {
       if (!pendingImport || committing) return;
       if (stale || JSON.stringify(records) !== pendingImport.baseline) {
@@ -1306,7 +1312,7 @@
       download(JSON.stringify(pendingImport.review, null, 2), spec.app_id + "-import-review.json", "application/json");
       tell("Review summary download requested. Record values are excluded; export data separately to keep a backup.");
     });
-    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, addImport, chosenImportNote, previewChosenImport, applyChosenImport, exportImportReview, cancelImport);
+    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, addImport, chosenImportNote, previewChosenImport, applyChosenImport, exportProposedBackup, proposedBackupNote, exportImportReview, cancelImport);
     const layout = node("div", undefined, "workspace");
     const list = node("section", undefined, "records");
     list.id = "records";
