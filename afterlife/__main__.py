@@ -36,6 +36,31 @@ def import_csv_main(argv):
         print('afterlife: '+str(exc),file=sys.stderr);return 2
 
 
+def export_csv_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife export-csv", description="Export a complete matching native backup to private typed CSV. Explicit afterlife policy prefixes each nonempty text cell once, matching browser export; literal policy keeps text unprotected and may be interpreted by spreadsheets. No inference or recovery of spreadsheet transformations.")
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("backup", type=Path)
+    parser.add_argument("--text-policy", choices=("literal", "afterlife"), required=True)
+    parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if any(_same_file(args.output, source) for source in (args.spec, args.backup)):
+            raise CompileError("CSV output must not overwrite source inputs")
+        if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+            raise CompileError("CSV output must be a non-symlink regular file")
+        from .csv_export import export_csv
+        text, count = export_csv(load_json(args.spec), load_json(args.backup), text_policy=args.text_policy)
+        write_output(args.output, text, force=args.force)
+        print(json.dumps({"format": "afterlife-csv-export-receipt/v1", "records": count,
+                          "text_policy": args.text_policy, "csv_bytes": len(text.encode("utf-8")),
+                          "scope": "Complete app-bound backup validated before private CSV output. All ordered records/fields exported; native inputs unchanged. CSV contains private values and no embedded app identity or authenticity. Use the same explicit text policy for import-csv. Receipt omits IDs/field names/values; spreadsheet coercion cannot be undone."}))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def patch_csv_main(argv):
     parser=argparse.ArgumentParser(description="Patch only supplied CSV columns for explicit existing IDs in a complete matching backup. Omitted fields/order/other records stay; unknown or duplicate IDs refuse all. Native review and separate guarded restoration remain explicit.")
     parser.add_argument("spec",type=Path);parser.add_argument("current",type=Path);parser.add_argument("csv",type=Path)
@@ -157,6 +182,8 @@ def main(argv=None):
         return patch_csv_main(argv[1:])
     if argv and argv[0] == "import-csv":
         return import_csv_main(argv[1:])
+    if argv and argv[0] == "export-csv":
+        return export_csv_main(argv[1:])
     if argv and argv[0] == "review-export":
         return review_export_main(argv[1:])
     if argv and argv[0] == "propose-export":
