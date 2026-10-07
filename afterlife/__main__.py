@@ -86,6 +86,60 @@ def propose_export_main(argv):
         return 2
 
 
+def review_three_way_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife review-three-way", description="Compare explicit base/current/incoming backups without merging or printing record values. Report field conflicts separately from unilateral, converged and compatible edits; no source authenticity or merge-safety claim.")
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("base", type=Path)
+    parser.add_argument("current", type=Path)
+    parser.add_argument("incoming", type=Path)
+    parser.add_argument("--summary", action="store_true", help="Omit record IDs and field names from stdout; --output saves the complete report")
+    parser.add_argument("--check", action="store_true", help="Exit 1 for reported conflicts, 2 for invalid inputs; zero conflicts is not a merge-safety guarantee")
+    parser.add_argument("-o", "--output", type=Path, help="Save complete metadata report for propose-three-way; not a from-export guard")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if args.output:
+            if any(_same_file(args.output, source) for source in (args.spec, args.base, args.current, args.incoming)):
+                raise CompileError("Three-way report output must not overwrite source inputs")
+            if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+                raise CompileError("Three-way report output must be a non-symlink regular file")
+        from .three_way import review_three_way, three_way_summary
+        report = review_three_way(load_json(args.spec), load_json(args.base), load_json(args.current), load_json(args.incoming))
+        if args.output:
+            write_output(args.output, json.dumps(report, indent=2, ensure_ascii=True) + "\n", force=args.force)
+        print(json.dumps(three_way_summary(report) if args.summary else report, indent=2, ensure_ascii=True))
+        return 1 if args.check and report["counts"]["conflicts"] else 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
+def propose_three_way_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife propose-three-way", description="Create a private backup proposal from selected nonconflicting incoming field edits relative to an explicit base. Preserve current local fields/order/unselected records; no additions/deletions or input mutation.")
+    for name in ("spec", "base", "current", "incoming"):
+        parser.add_argument(name, type=Path)
+    parser.add_argument("--review", type=Path, required=True, help="Complete exact review-three-way --output guard")
+    parser.add_argument("--record-id", action="append", required=True)
+    parser.add_argument("-o", "--output", type=Path, required=True, help="Private proposal containing record values")
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if any(_same_file(args.output, source) for source in (args.spec, args.base, args.current, args.incoming, args.review)):
+            raise CompileError("Three-way proposal output must not overwrite source inputs or the review")
+        if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+            raise CompileError("Three-way proposal output must be a non-symlink regular file")
+        from .three_way import propose_three_way
+        from .compiler import _canonical
+        proposal, receipt = propose_three_way(load_json(args.spec), load_json(args.base), load_json(args.current),
+                                             load_json(args.incoming), load_json(args.review), args.record_id)
+        write_output(args.output, _canonical(proposal) + "\n", force=args.force)
+        print(json.dumps(receipt, indent=2, ensure_ascii=True))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "showcase":
@@ -105,13 +159,17 @@ def main(argv=None):
         return review_export_main(argv[1:])
     if argv and argv[0] == "propose-export":
         return propose_export_main(argv[1:])
+    if argv and argv[0] == "review-three-way":
+        return review_three_way_main(argv[1:])
+    if argv and argv[0] == "propose-three-way":
+        return propose_three_way_main(argv[1:])
     from_export = bool(argv and argv[0] == "from-export")
     if from_export:
         argv.pop(0)
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample, 'import-csv' for an explicitly typed complete backup, or 'patch-csv' for guarded partial-column backup edits. Use 'review-export' to inspect matching backups and 'propose-export' for a guarded private proposal from selected existing edits. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample, 'import-csv' for an explicitly typed complete backup, or 'patch-csv' for guarded partial-column backup edits. Use 'review-export' to inspect matching backups, 'review-three-way'/'propose-three-way' for guarded shared-base field proposals, and 'propose-export' for a guarded private proposal from selected existing edits. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")
