@@ -27,14 +27,20 @@ def _body_without_docstring(body):
     return body
 
 
-def _kind(annotation):
+def _kind(annotation, *, optional_imported=False, typing_imported=False):
     if isinstance(annotation, ast.Name) and annotation.id in {"str", "bool", "int"}:
         return {"str": "text", "bool": "boolean", "int": "integer"}[annotation.id], False
-    if (isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr)
-            and isinstance(annotation.left, ast.Name) and annotation.left.id == "int"
-            and isinstance(annotation.right, ast.Constant) and annotation.right.value is None):
-        return "integer", True
-    _fail(annotation, "supported annotations are str, bool, int, and int | None; no inferred or computed types")
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        for integer, null in ((annotation.left, annotation.right), (annotation.right, annotation.left)):
+            if isinstance(integer, ast.Name) and integer.id == "int" and isinstance(null, ast.Constant) and null.value is None:
+                return "integer", True
+    if isinstance(annotation, ast.Subscript) and isinstance(annotation.slice, ast.Name) and annotation.slice.id == "int":
+        value = annotation.value
+        if (optional_imported and isinstance(value, ast.Name) and value.id == "Optional"
+                or typing_imported and isinstance(value, ast.Attribute) and value.attr == "Optional"
+                and isinstance(value.value, ast.Name) and value.value.id == "typing"):
+            return "integer", True
+    _fail(annotation, "supported annotations are str, bool, int, int | None, None | int, and explicitly imported Optional[int]/typing.Optional[int]; no inferred or computed types")
 
 
 def _literal(node):
@@ -62,23 +68,33 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
     model = None
     seen_import = False
     seen_future = False
+    seen_optional = False
+    seen_typing = False
     for node in _body_without_docstring(tree.body):
         if isinstance(node, ast.ImportFrom) and not node.level:
             names = [(item.name, item.asname) for item in node.names]
-            if node.module == "__future__" and names == [("annotations", None)] and not seen_future and not seen_import and model is None:
+            if node.module == "__future__" and names == [("annotations", None)] and not any((seen_future, seen_import, seen_optional, seen_typing)) and model is None:
                 seen_future = True
                 continue
             if node.module == "dataclasses" and names == [("dataclass", None)] and not seen_import and model is None:
                 seen_import = True
                 continue
-            _fail(node, "only 'from dataclasses import dataclass' and optional future annotations are supported")
+            if node.module == "typing" and names == [("Optional", None)] and not seen_optional and model is None:
+                seen_optional = True
+                continue
+            _fail(node, "only dataclass, optional future annotations, and explicit unaliased typing/Optional imports are supported")
+        if (isinstance(node, ast.Import) and [(item.name, item.asname) for item in node.names] == [("typing", None)]
+                and not seen_typing and model is None):
+            seen_typing = True
+            continue
         if isinstance(node, ast.ClassDef) and model is None and seen_import:
             model = node
             continue
         _fail(node, "model module must contain only one dataclass; executable statements and extra definitions are unsupported")
     if model is None:
         raise CompileError("Python model must declare one @dataclass after importing dataclass")
-    if model.name in {"str", "int", "bool", "dataclass"}:
+    reserved = {"str", "int", "bool", "dataclass"} | ({"Optional"} if seen_optional else set()) | ({"typing"} if seen_typing else set())
+    if model.name in reserved:
         _fail(model, "model name cannot shadow a supported type or dataclass")
     if (model.bases or model.keywords or getattr(model, "type_params", [])
             or len(model.decorator_list) != 1 or not isinstance(model.decorator_list[0], ast.Name)
@@ -91,12 +107,12 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
         if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name) or not node.simple:
             _fail(node, "only annotated fields are supported; methods, validators, properties, and executable statements cannot be preserved")
         name = node.target.id
-        if name in {"str", "int", "bool", "dataclass"}:
+        if name in reserved:
             _fail(node, "field name cannot shadow a supported type or dataclass")
         if name in names:
             _fail(node, f"duplicate field {name!r}")
         names.add(name)
-        kind, nullable = _kind(node.annotation)
+        kind, nullable = _kind(node.annotation, optional_imported=seen_optional, typing_imported=seen_typing)
         if index == 0:
             if name != "id" or kind != "text" or node.value is not None:
                 _fail(node, "first field must be exactly id: str without a default")
