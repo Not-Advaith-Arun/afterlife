@@ -147,6 +147,8 @@ def main(argv=None):
         return showcase_main(argv[1:])
     if argv and argv[0] == "verify-build":
         return verify_build_main(argv[1:])
+    if argv and argv[0] == "verify-python-build":
+        return verify_python_build_main(argv[1:])
     if argv and argv[0] == "verify-artifact":
         return verify_artifact_main(argv[1:])
     if argv and argv[0] == "audit-python":
@@ -337,6 +339,26 @@ def verify_build_main(argv):
         result = verify_build(args.spec, args.data, args.artifact)
         print(json.dumps(result, indent=2))
         return 0 if result["matched"] else 1
+    except (CompileError, OSError, ValueError, UnicodeError, RecursionError) as error:
+        print(f"afterlife: {error}", file=sys.stderr)
+        return 2
+
+
+def verify_python_build_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife verify-python-build", description="Read-only rebuild from a supported Python model and records without executing model or HTML; optionally check the complete extraction manifest.")
+    for name in ("model", "data", "artifact"):
+        parser.add_argument(name, type=Path)
+    parser.add_argument("--manifest", type=Path, help="Optional complete original from-python manifest")
+    parser.add_argument("--app-id")
+    parser.add_argument("--title")
+    parser.add_argument("--record-label")
+    args = parser.parse_args(argv)
+    try:
+        from .verification import verify_python_build
+        report = verify_python_build(args.model, args.data, args.artifact, manifest_path=args.manifest,
+                                     app_id=args.app_id, title=args.title, record_label=args.record_label)
+        print(json.dumps(report, indent=2))
+        return 0 if report["matched"] else 1
     except (CompileError, OSError, ValueError, UnicodeError, RecursionError) as error:
         print(f"afterlife: {error}", file=sys.stderr)
         return 2
