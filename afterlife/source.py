@@ -69,10 +69,23 @@ def _literal(node):
     _fail(node, "defaults must be literal text, boolean, integer, or None; calls and expressions are unsupported")
 
 
+def _default(node, *, field_imported=False):
+    if not (field_imported and isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "field"):
+        return _literal(node)
+    if node.args or len(node.keywords) != 1 or node.keywords[0].arg not in {"default", "default_factory"}:
+        _fail(node, "field supports exactly one default or primitive default_factory keyword; no other behavior")
+    keyword = node.keywords[0]
+    if keyword.arg == "default":
+        return _literal(keyword.value)
+    if isinstance(keyword.value, ast.Name) and keyword.value.id in {"str", "int", "bool"}:
+        return {"str": "", "int": 0, "bool": False}[keyword.value.id]
+    _fail(node, "default_factory supports only bare unshadowed str, int or bool; factories are never executed")
+
+
 def extract_python_model(path, *, app_id=None, title=None, record_label=None):
     """Return (validated app specification, extraction evidence), never execute source.
 
-    Only one plain @dataclass with id: str first, literal defaults, and supported
+    Only one plain @dataclass with id: str first, literal defaults or explicitly supported field defaults, and supported
     primitive/string-choice annotations is supported. Other statements, imports, decorators and methods are
     rejected. This deliberately does not scan or claim to preserve other files.
     """
@@ -88,15 +101,20 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
     seen_optional = False
     seen_typing = False
     seen_literal = False
+    seen_field = False
     for node in _body_without_docstring(tree.body):
         if isinstance(node, ast.ImportFrom) and not node.level:
             names = [(item.name, item.asname) for item in node.names]
-            if node.module == "__future__" and names == [("annotations", None)] and not any((seen_future, seen_import, seen_optional, seen_typing, seen_literal)) and model is None:
+            if node.module == "__future__" and names == [("annotations", None)] and not any((seen_future, seen_import, seen_optional, seen_typing, seen_literal, seen_field)) and model is None:
                 seen_future = True
                 continue
-            if node.module == "dataclasses" and names == [("dataclass", None)] and not seen_import and model is None:
-                seen_import = True
-                continue
+            if node.module == "dataclasses" and model is None:
+                imported = {name for name, alias in names if alias is None}
+                if (len(imported) == len(names) and imported and imported <= {"dataclass", "field"}
+                        and not (seen_import and "dataclass" in imported or seen_field and "field" in imported)):
+                    seen_import = seen_import or "dataclass" in imported
+                    seen_field = seen_field or "field" in imported
+                    continue
             if node.module == "typing" and model is None:
                 imported = {name for name, alias in names if alias is None}
                 if (len(imported) == len(names) and imported and imported <= {"Optional", "Literal"}
@@ -104,7 +122,7 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
                     seen_optional = seen_optional or "Optional" in imported
                     seen_literal = seen_literal or "Literal" in imported
                     continue
-            _fail(node, "only dataclass, optional future annotations, and explicit unaliased typing/Optional/Literal imports are supported")
+            _fail(node, "only dataclass/field, optional future annotations, and explicit unaliased typing/Optional/Literal imports are supported")
         if (isinstance(node, ast.Import) and [(item.name, item.asname) for item in node.names] == [("typing", None)]
                 and not seen_typing and model is None):
             seen_typing = True
@@ -116,7 +134,7 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
     if model is None:
         raise CompileError("Python model must declare one @dataclass after importing dataclass")
     reserved = ({"str", "int", "bool", "dataclass"} | ({"Optional"} if seen_optional else set())
-                | ({"typing"} if seen_typing else set()) | ({"Literal"} if seen_literal else set()))
+                | ({"typing"} if seen_typing else set()) | ({"Literal"} if seen_literal else set()) | ({"field"} if seen_field else set()))
     if model.name in reserved:
         _fail(model, "model name cannot shadow a supported type or dataclass")
     if (model.bases or model.keywords or getattr(model, "type_params", [])
@@ -147,7 +165,7 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
         # them even when the user only opens and saves an unrelated field.
         field = {"name": name, "label": name.replace("_", " ").capitalize(),
                  "type": "multiline" if kind == "text" else kind,
-                 "default": _literal(node.value)}
+                 "default": _default(node.value, field_imported=seen_field)}
         if kind == "integer" and not nullable:
             field["required"] = True
         if kind == "select":
@@ -155,7 +173,8 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
             field["options"] = _literal_choices(node.annotation, literal_imported=seen_literal, typing_imported=seen_typing)
         fields.append(field)
         evidence_fields.append({"name": name, "line": node.lineno, "type": ast.unparse(node.annotation),
-                                "default": field["default"]})
+                                "default": field["default"],
+                                **({"default_expression": ast.unparse(node.value)} if isinstance(node.value, ast.Call) else {})})
     if not body:
         _fail(model, "model needs id: str and at least one record field")
     name = re.sub(r"(?<!^)(?=[A-Z])", "-", model.name).lower()
