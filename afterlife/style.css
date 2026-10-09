@@ -7,6 +7,7 @@ button:hover { background: #e5eef5; }
 button.primary { background: #185fa1; color: #fff; border-color: #185fa1; }
 button.primary:hover { background: #114976; }
 button.danger { color: #96332c; }
+button:disabled { color: #657887; background: #edf2f6; border-color: #c7d3de; cursor: default; }
 :focus-visible { outline: 3px solid #b65400; outline-offset: 3px; }
 [hidden] { display: none !important; }
 #app { max-width: 1500px; margin: 0 auto; padding: 44px 38px; }
@@ -24,6 +25,9 @@ input:not([type=checkbox]), select, textarea { width: 100%; border: 1px solid #9
 textarea { resize: vertical; min-height: 100px; }
 input[type=checkbox] { width: 24px; height: 24px; accent-color: #185fa1; }
 .count { margin: 0 auto 11px 0; color: #465d70; font-size: .9rem; }
+.pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.pagination button { min-height: 48px; }
+.page-status { margin: 0 auto 0 0; color: #465d70; font-size: .9rem; }
 .workspace { display: flex; align-items: flex-start; gap: 28px; }
 .records { flex: 1; min-width: 0; overflow-x: auto; border-radius: 6px; background: #fff; border: 1px solid #c7d3de; }
 table { border-collapse: collapse; width: 100%; text-align: left; font-size: .93rem; }
@@ -42,4 +46,4 @@ h2 { font-size: 1.3rem; margin: 0 0 24px; }
 .empty { margin: 0; padding: 45px 25px; line-height: 1.6; }
 footer { margin-top: 32px; font-size: .82rem; color: #526779; line-height: 1.6; }
 @media (max-width: 1000px) { .page-header { align-items: flex-start; } .workspace { flex-direction: column-reverse; } .editor, .records { width: 100%; } }
-@media (max-width: 650px) { #app { padding: 25px 16px; } .page-header { flex-direction: column; gap: 22px; } .file-actions { justify-content: flex-start; } .toolbar { gap: 12px; } .search-label { width: 100%; } .count { flex-basis: 100%; margin: 0; } }
+@media (max-width: 650px) { #app { padding: 25px 16px; } .page-header { flex-direction: column; gap: 22px; } .file-actions { justify-content: flex-start; } .toolbar { gap: 12px; } .search-label { width: 100%; } .count { flex-basis: 100%; margin: 0; } .page-status { flex-basis: 100%; margin-bottom: 4px; } }

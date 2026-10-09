@@ -2,6 +2,7 @@
   "use strict";
   const MAX_RECORDS = 10000;
   const MAX_BYTES = 10 * 1024 * 1024;
+  const PAGE_SIZE = 100;
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
   const textLength = value => [...value].length;
@@ -12,7 +13,7 @@
   // Match Python str.strip() whitespace, including U+0085 but excluding U+FEFF.
   const blankText = value => /^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$/u.test(value);
 
-  function validateRecords(spec, records) {
+  function normalizeRecords(spec, records, onRecord) {
     if (!Array.isArray(records) || records.length > MAX_RECORDS) {
       throw new Error("Expected at most 10,000 records.");
     }
@@ -45,8 +46,13 @@
         }
         result[field.name] = value;
       }
+      if (onRecord) onRecord(result, index);
       return result;
     });
+  }
+
+  function validateRecords(spec, records) {
+    return normalizeRecords(spec, records);
   }
 
   function applyOperation(spec, records, operation) {
@@ -65,13 +71,34 @@
     return validateRecords(spec, current.map(record => record.id === operation.id ? {...record, ...operation.changes} : record));
   }
 
-  function validateEnvelope(payload, value) {
+  function prepareEnvelope(payload, value, serialize = false) {
     if (!isObject(value) || Object.keys(value).some(key => !["format", "app_id", "spec_fingerprint", "records"].includes(key)) ||
         value.format !== "afterlife-data/v1" || value.app_id !== payload.spec.app_id ||
         value.spec_fingerprint !== payload.spec_fingerprint) {
       throw new Error("This file is not an export from the same app specification.");
     }
-    return validateRecords(payload.spec, value.records);
+    const prefix = JSON.stringify({format: value.format, app_id: value.app_id,
+      spec_fingerprint: value.spec_fingerprint}).slice(0, -1) + ',"records":[';
+    const encoder = new TextEncoder();
+    let bytes = encoder.encode(prefix).byteLength + 2;
+    const parts = serialize ? [prefix] : null;
+    const checkSize = () => {
+      if (bytes > MAX_BYTES) throw new Error("Data exceeds 10 MiB. Export and split this collection.");
+    };
+    checkSize();
+    const records = normalizeRecords(payload.spec, value.records, (record, index) => {
+      // One validated record is bounded by the schema. Stop before expanding
+      // later defaults or allocating a serialized copy of the whole collection.
+      const encoded = JSON.stringify(record);
+      bytes += encoder.encode(encoded).byteLength + (index ? 1 : 0);
+      checkSize();
+      if (parts) parts.push((index ? "," : "") + encoded);
+    });
+    return {records, serialized: parts ? parts.join("") + "]}" : null};
+  }
+
+  function validateEnvelope(payload, value) {
+    return prepareEnvelope(payload, value).records;
   }
 
   function escapeJSON(value) {
@@ -82,6 +109,32 @@
   function matches(spec, record, query) {
     const needle = query.trim().toLocaleLowerCase();
     return !needle || spec.fields.some(field => String(record[field.name] ?? "").toLocaleLowerCase().includes(needle));
+  }
+
+  function exportDataJSON(value) {
+    const pretty = JSON.stringify(value, null, 2) + "\n";
+    if (new Blob([pretty]).size <= MAX_BYTES) return pretty;
+    const compact = JSON.stringify(value);
+    const bytes = new Blob([compact]).size;
+    if (bytes > MAX_BYTES) throw new Error("Data exceeds 10 MiB. Export and split this collection.");
+    // Formatting must not make accepted data too large for this app to import.
+    return compact + (bytes < MAX_BYTES ? "\n" : "");
+  }
+
+  async function storeIfCurrent(storage, locks, key, previous, next) {
+    // localStorage has no compare-and-swap. Serialize cooperating copies before
+    // reading the expected value and writing; unsupported browsers stay in memory.
+    if (!locks || typeof locks.request !== "function") return {status: "memory", reason: "coordination"};
+    try {
+      return await locks.request("afterlife-write:" + key, {ifAvailable: true}, lock => {
+        if (!lock) return {status: "busy"};
+        if (storage.getItem(key) !== previous) return {status: "changed"};
+        storage.setItem(key, next);
+        return {status: "saved"};
+      });
+    } catch (error) {
+      return {status: "memory", reason: error.name === "QuotaExceededError" ? "quota" : "storage"};
+    }
   }
 
   function boot() {
@@ -96,7 +149,12 @@
     let stale = false;
     let lastStored = null;
     let blockedStorage = false;
+    let committing = false;
+    let currentPage = 0;
+    let pageCount = 1;
+    let storageFailure = "";
     let initialWarning = "";
+    const conflictWarning = "Another tab changed this app. Keep editing a separate copy to save your editor changes here, or reload to use the other tab’s records.";
 
     const node = (tag, text, className) => {
       const element = document.createElement(tag);
@@ -150,6 +208,7 @@
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     };
     const saveHTML = () => {
+      if (committing) return tell("Wait for the current save to finish before downloading.", true);
       const copy = document.documentElement.cloneNode(true);
       copy.querySelector("#app").replaceChildren();
       const suffix = [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
@@ -165,8 +224,11 @@
     fileInput.hidden = true;
     fileActions.append(button("Download app", saveHTML, "primary"),
       button("Export JSON", () => {
-        download(JSON.stringify(envelope(), null, 2) + "\n", spec.app_id + "-data.json", "application/json");
-        tell("JSON download requested. Keep the app file with this export.");
+        if (committing) return tell("Wait for the current save to finish before downloading.", true);
+        try {
+          download(exportDataJSON(envelope()), spec.app_id + "-data.json", "application/json");
+          tell("JSON download requested. Keep the app file with this export.");
+        } catch (error) { tell(error.message, true); }
       }), button("Import JSON", () => fileInput.click()), fileInput);
     header.append(titleBlock, fileActions);
 
@@ -180,17 +242,41 @@
     const count = node("p", "", "count");
     count.setAttribute("aria-live", "polite");
     const newButton = button("New " + (spec.record_label || "record"), () => openEditor());
-    const undo = button("Undo delete", () => {
+    const separateCopy = button("Keep editing a separate copy", () => {
+      if (committing) return tell("Wait for the current save to finish.", true);
+      blockedStorage = true;
+      stale = false;
+      storageFailure = "This tab is a separate copy. ";
+      status.textContent = storageFailure + "Changes are only in memory. Download app or export JSON before closing this tab.";
+      separateCopy.hidden = true;
+      tell("You can save your editor changes into this separate copy. The other tab’s stored records will be kept.");
+    });
+    separateCopy.hidden = true;
+    const undo = button("Undo delete", async () => {
       if (!lastDeleted) return;
       if (records.length >= MAX_RECORDS) return tell("Record limit reached. Export your data before removing records.", true);
       const next = [...records];
       next.splice(Math.min(lastDeleted.index, records.length), 0, lastDeleted.record);
-      if (commit(next)) { lastDeleted = null; undo.hidden = true; tell("Deleted record restored."); }
+      if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell("Deleted record restored."); }
     });
     undo.hidden = true;
-    toolbar.append(searchLabel, count, undo, newButton);
+    toolbar.append(searchLabel, count, undo, separateCopy, newButton);
+    const pagination = node("nav", undefined, "pagination");
+    pagination.setAttribute("aria-label", "Record pages");
+    const pageStatus = node("p", "", "page-status");
+    pageStatus.id = "page-status";
+    pageStatus.setAttribute("role", "status");
+    pageStatus.setAttribute("aria-live", "polite");
+    pageStatus.setAttribute("aria-atomic", "true");
+    const firstPage = button("First page", () => changePage(0));
+    const previousPage = button("Previous page", () => changePage(currentPage - 1));
+    const nextPage = button("Next page", () => changePage(currentPage + 1));
+    const lastPage = button("Last page", () => changePage(pageCount - 1));
+    for (const control of [firstPage, previousPage, nextPage, lastPage]) control.setAttribute("aria-controls", "records");
+    pagination.append(pageStatus, firstPage, previousPage, nextPage, lastPage);
     const layout = node("div", undefined, "workspace");
     const list = node("section", undefined, "records");
+    list.id = "records";
     list.setAttribute("aria-label", "Records");
     const panel = node("aside", undefined, "editor");
     panel.hidden = true;
@@ -235,6 +321,7 @@
     const save = node("button", "Save record", "primary");
     save.type = "submit";
     const close = () => {
+      if (committing) return tell("Wait for the current save to finish.", true);
       if (dirty && !confirm("Discard unsaved changes in the editor?")) return;
       panel.hidden = true;
       dirty = false;
@@ -245,10 +332,11 @@
     form.append(formActions);
     panel.append(panelTitle, form);
     layout.append(list, panel);
-    app.append(header, status, message, toolbar, layout,
+    app.append(header, status, message, toolbar, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
 
     function openEditor(record = null) {
+      if (committing) return tell("Wait for the current save to finish.", true);
       if (dirty && !confirm("Discard unsaved changes in the editor?")) return;
       currentId = record ? record.id : null;
       panelTitle.textContent = record ? "Edit " + (spec.record_label || "record") : "New " + (spec.record_label || "record");
@@ -267,10 +355,27 @@
       fieldInputs.values().next().value.focus();
     }
 
+    function changePage(page) {
+      if (committing) return tell("Wait for the current save to finish.", true);
+      currentPage = page;
+      render();
+    }
+
     function render() {
+      const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
       const visible = records.filter(record => matches(spec, record, search.value));
       count.textContent = `${visible.length} of ${records.length} records`;
+      pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+      currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
+      const start = currentPage * PAGE_SIZE;
+      pagination.hidden = visible.length <= PAGE_SIZE;
+      firstPage.disabled = previousPage.disabled = currentPage === 0;
+      nextPage.disabled = lastPage.disabled = currentPage === pageCount - 1;
+      pageStatus.textContent = `Page ${currentPage + 1} of ${pageCount}. Records ${visible.length ? start + 1 : 0}–${Math.min(start + PAGE_SIZE, visible.length)} of ${visible.length}.`;
+      if (focusedPageControl && (pagination.hidden || focusedPageControl.disabled)) {
+        (pagination.hidden ? search : currentPage === 0 ? nextPage : previousPage).focus();
+      }
       if (visible.length === 0) {
         list.append(node("p", records.length ? "No records match your search." : "This copy is empty. Create your first record.", "empty"));
         return;
@@ -288,7 +393,7 @@
       headings.append(actionsHeading);
       head.append(headings);
       const body = node("tbody");
-      for (const record of visible) {
+      for (const record of visible.slice(start, start + PAGE_SIZE)) {
         const row = node("tr");
         row.dataset.recordId = record.id;
         for (const field of spec.fields) {
@@ -298,10 +403,10 @@
           row.append(cell);
         }
         const actions = node("td", undefined, "row-actions");
-        actions.append(button("Edit", () => openEditor(record)), button("Delete", () => {
+        actions.append(button("Edit", () => openEditor(record)), button("Delete", async () => {
           if (!confirm("Delete this record? You can undo the most recent deletion.")) return;
           const index = records.findIndex(item => item.id === record.id);
-          if (commitOperation({op: "delete", id: record.id})) {
+          if (await commitOperation({op: "delete", id: record.id})) {
             lastDeleted = {record, index}; undo.hidden = false;
             if (currentId === record.id) { dirty = false; panel.hidden = true; currentId = null; }
             tell("Record deleted. Undo is available until the next import or reload.");
@@ -314,39 +419,60 @@
       list.append(table);
     }
 
-    function commit(next) {
+    async function commit(next, {resetPage = false} = {}) {
+      if (committing) { tell("A save is already in progress. Try again when it finishes.", true); return false; }
+      committing = true;
+      save.disabled = true;
+      save.textContent = "Saving…";
+      for (const input of fieldInputs.values()) input.disabled = true;
       try {
-        if (stale) throw new Error("Another tab changed this app. Download this tab’s copy if needed, then reload before editing.");
-        const checked = validateRecords(spec, next);
-        const serialized = JSON.stringify({...envelope(), records: checked});
-        if (new Blob([serialized]).size > MAX_BYTES) throw new Error("Data exceeds 10 MiB. Export and split this collection.");
+        if (stale) throw new Error(conflictWarning);
+        const {records: checked, serialized} = prepareEnvelope(payload, {...envelope(), records: next}, true);
         if (!blockedStorage) {
+          let persisted;
           try {
-            if (localStorage.getItem(payload.storage_key) !== lastStored) {
-              stale = true;
-              throw new Error("Another tab changed this app. Download this tab’s copy if needed, then reload before editing.");
-            }
-            localStorage.setItem(payload.storage_key, serialized);
+            persisted = await storeIfCurrent(localStorage, navigator.locks, payload.storage_key, lastStored, serialized);
+          } catch (error) {
+            persisted = {status: "memory", reason: "storage"};
+          }
+          if (persisted.status === "busy") {
+            throw new Error("Another tab is saving this app. Your editor changes are still here; try saving again.");
+          }
+          if (persisted.status === "changed") {
+            stale = true;
+            separateCopy.hidden = false;
+            throw new Error(conflictWarning);
+          }
+          if (persisted.status === "saved") {
             lastStored = serialized;
             status.textContent = "Saved in this browser. Download app to save a portable copy.";
-          } catch (error) {
-            if (stale) throw error;
+          } else {
             blockedStorage = true;
+            storageFailure = persisted.reason === "quota" ? "Browser storage is full. " :
+              persisted.reason === "coordination" ? "This browser cannot coordinate saved changes between tabs. " :
+              "Browser storage could not be updated. ";
           }
         }
         records = checked;
-        if (blockedStorage) status.textContent = "Changes are only in memory. Download app or export JSON before closing this tab.";
+        if (resetPage) currentPage = 0;
+        if (blockedStorage) status.textContent = storageFailure + "Changes are only in memory. Download app or export JSON before closing this tab.";
         render();
         return true;
       } catch (error) { tell(error.message, true); return false; }
+      finally {
+        committing = false;
+        save.disabled = false;
+        save.textContent = "Save record";
+        for (const input of fieldInputs.values()) input.disabled = false;
+      }
     }
 
-    function commitOperation(operation) {
-      try { return commit(applyOperation(spec, records, operation)); }
+    async function commitOperation(operation) {
+      try { return await commit(applyOperation(spec, records, operation)); }
       catch (error) { tell(error.message, true); return false; }
     }
 
-    form.addEventListener("submit", event => {
+    form.addEventListener("submit", async event => {
       event.preventDefault();
       const random = () => [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
       const record = {id: currentId || "r-" + random()};
@@ -362,7 +488,7 @@
       if (currentId && !records.some(item => item.id === currentId)) return tell("This record no longer exists. Reopen the editor.", true);
       const {id, ...changes} = record;
       const operation = currentId ? {op: "edit", id: currentId, changes} : {op: "create", record};
-      if (commitOperation(operation)) { dirty = false; panel.hidden = true; currentId = null; tell("Record saved."); newButton.focus(); }
+      if (await commitOperation(operation)) { dirty = false; panel.hidden = true; currentId = null; tell("Record saved."); newButton.focus(); }
     });
     fileInput.addEventListener("change", async () => {
       const file = fileInput.files[0];
@@ -373,28 +499,29 @@
         const imported = validateEnvelope(payload, JSON.parse(await file.text()));
         if (!confirm(`Replace all ${records.length} records with ${imported.length} imported records? Export first if you need the current copy.`)) return;
         if (dirty && !confirm("Discard unsaved editor changes and import?")) return;
-        if (commit(imported)) {
+        if (await commit(imported, {resetPage: true})) {
           lastDeleted = null; undo.hidden = true; dirty = false; panel.hidden = true; currentId = null;
           tell(`Imported ${imported.length} records.`);
         }
       } catch (error) { tell("Import failed: " + error.message, true); }
     });
-    search.addEventListener("input", render);
+    search.addEventListener("input", () => { currentPage = 0; render(); });
     window.addEventListener("storage", event => {
-      if (event.key === payload.storage_key || event.key === null) {
+      if (!blockedStorage && (event.key === payload.storage_key || event.key === null)) {
         stale = true;
-        tell("Another tab changed browser storage. Download this tab’s copy if needed, then reload before editing.", true);
+        separateCopy.hidden = false;
+        tell(conflictWarning, true);
       }
     });
     window.addEventListener("beforeunload", event => {
-      if (dirty || blockedStorage) { event.preventDefault(); event.returnValue = ""; }
+      if (dirty || blockedStorage || committing) { event.preventDefault(); event.returnValue = ""; }
     });
     if (initialWarning) { status.textContent = initialWarning; tell(initialWarning, true); }
     render();
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, defaultValue, applyOperation};
+    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
   }
   if (typeof document !== "undefined") boot();
 })();

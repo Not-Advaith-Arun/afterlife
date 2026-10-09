@@ -5,7 +5,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const {pathToFileURL} = require("node:url");
-const {chromium} = require(process.env.AFTERLIFE_PLAYWRIGHT_MODULE || "playwright");
+const {launch, offlineContext} = require("./browser_support.cjs");
 const {execFileSync} = require("node:child_process");
 
 (async () => {
@@ -14,10 +14,9 @@ const {execFileSync} = require("node:child_process");
   const artifact = path.join(directory, "app.html");
   execFileSync(process.env.PYTHON || "python3", ["-m", "afterlife", "examples/task-tracker/app.json",
     "examples/task-tracker/records.json", "-o", artifact], {cwd: root});
-  const browser = await chromium.launch({headless: true,
-    ...(process.env.AFTERLIFE_CHROMIUM ? {executablePath: process.env.AFTERLIFE_CHROMIUM} : {})});
+  const browser = await launch();
   try {
-    const context = await browser.newContext({acceptDownloads: true, offline: true});
+    const context = await offlineContext(browser, {acceptDownloads: true, offline: true});
     const page = await context.newPage();
     const errors = [];
     const network = [];
@@ -33,6 +32,7 @@ const {execFileSync} = require("node:child_process");
     await page.getByLabel("Notes", {exact: true}).fill("Browser regression record");
     await page.getByLabel("Hours", {exact: true}).fill("7");
     await page.getByRole("button", {name: "Save record", exact: true}).click();
+    await page.locator("aside.editor").waitFor({state: "hidden"});
     assert.equal(await page.locator("tbody tr").count(), 4);
     assert.equal(await page.locator("tbody img").count(), 0);
     assert.equal(await page.evaluate(() => globalThis.pwned), undefined);
@@ -43,10 +43,13 @@ const {execFileSync} = require("node:child_process");
     await page.getByRole("button", {name: "Edit", exact: true}).click();
     await page.getByLabel("Hours", {exact: true}).fill("8");
     await page.getByRole("button", {name: "Save record", exact: true}).click();
+    await page.locator("aside.editor").waitFor({state: "hidden"});
     assert.ok((await page.locator("tbody").innerText()).includes("8"));
     await page.getByRole("button", {name: "Delete", exact: true}).click();
+    await page.getByText("Record deleted. Undo is available until the next import or reload.", {exact: true}).waitFor();
     assert.equal(await page.locator("tbody tr").count(), 0);
     await page.getByRole("button", {name: "Undo delete", exact: true}).click();
+    await page.getByText("Deleted record restored.", {exact: true}).waitFor();
     assert.equal(await page.locator("tbody tr").count(), 1);
 
     const jsonDownload = page.waitForEvent("download");
@@ -62,7 +65,7 @@ const {execFileSync} = require("node:child_process");
     const snapshot = path.join(directory, "snapshot.html");
     await (await htmlDownload).saveAs(snapshot);
     // A fresh browser context proves persistence is in the downloaded file.
-    const cleanContext = await browser.newContext({offline: true});
+    const cleanContext = await offlineContext(browser, {offline: true});
     const restored = await cleanContext.newPage();
     restored.on("pageerror", error => errors.push(error.message));
     restored.on("request", request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
@@ -84,7 +87,7 @@ const {execFileSync} = require("node:child_process");
     await restored.setViewportSize({width: 390, height: 844});
     assert.ok(await restored.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
-    const deniedContext = await browser.newContext({offline: true, acceptDownloads: true});
+    const deniedContext = await offlineContext(browser, {offline: true, acceptDownloads: true});
     await deniedContext.addInitScript(() => {
       Object.defineProperty(window, "localStorage", {get() { throw new DOMException("Storage denied", "SecurityError"); }});
     });
@@ -98,6 +101,7 @@ const {execFileSync} = require("node:child_process");
     await denied.getByLabel("Task *", {exact: true}).fill("Survives denied storage");
     await denied.getByLabel("Status *", {exact: true}).selectOption("Planned");
     await denied.getByRole("button", {name: "Save record", exact: true}).click();
+    await denied.locator("aside.editor").waitFor({state: "hidden"});
     assert.equal(await denied.locator("tbody tr").count(), 4);
     assert.ok((await denied.locator("#storage-status").innerText()).includes("only in memory"));
     const deniedDownload = denied.waitForEvent("download");

@@ -122,13 +122,13 @@ def _validate_value(field, value, context):
     return value
 
 
-def validate_records(spec, records):
-    """Return complete normalized records, rejecting lossy or ambiguous inputs."""
+def _normalized_records(spec, records):
+    """Yield validated records so compilation can stop at its byte budget."""
     if not isinstance(records, list) or len(records) > MAX_RECORDS:
         raise CompileError(f"records must be an array of at most {MAX_RECORDS} records")
     fields = spec["fields"]
     names = {field["name"] for field in fields}
-    seen, result = set(), []
+    seen = set()
     for index, record in enumerate(records):
         context = f"records[{index}]"
         _object(record, context, names | {"id"}, {"id"})
@@ -141,8 +141,12 @@ def validate_records(spec, records):
             name = field["name"]
             value = record.get(name, _default(field))
             normalized[name] = _validate_value(field, value, f"{context}.{name}")
-        result.append(normalized)
-    return result
+        yield normalized
+
+
+def validate_records(spec, records):
+    """Return complete normalized records, rejecting lossy or ambiguous inputs."""
+    return list(_normalized_records(spec, records))
 
 
 def _unique_object(pairs):
@@ -184,8 +188,22 @@ def compile_app(spec, data):
     """Return (HTML, manifest). The same validated input produces identical bytes."""
     validate_spec(spec)
     _object(data, "data", {"records"}, {"records"})
-    records = validate_records(spec, data["records"])
     spec_hash = _hash(_canonical(spec))
+    # Both hashes contain exactly 64 ASCII hex characters. With empty records,
+    # this has the final payload's exact fixed size, including its array brackets.
+    sizing_payload = {"spec": spec, "records": [], "spec_fingerprint": spec_hash,
+                      "storage_key": "afterlife:v1:" + "0" * 64}
+    size = len(safe_script_json(sizing_payload).encode("utf-8"))
+    if size > MAX_BYTES:
+        raise CompileError("Combined application data exceeds 10 MiB")
+    records = []
+    for record in _normalized_records(spec, data["records"]):
+        # Each record has at most 32 bounded primitive fields. Count its exact
+        # HTML-safe representation before retaining it or visiting the next row.
+        size += len(safe_script_json(record).encode("utf-8")) + bool(records)
+        if size > MAX_BYTES:
+            raise CompileError("Combined application data exceeds 10 MiB")
+        records.append(record)
     source_hash = _hash(_canonical({"spec": spec, "records": records}))
     payload = {"spec": spec, "records": records, "spec_fingerprint": spec_hash,
                "storage_key": f"afterlife:v1:{source_hash}"}

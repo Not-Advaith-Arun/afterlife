@@ -7,6 +7,7 @@ import sys
 
 from .compiler import CompileError, compile_app, load_json
 from .source import extract_python_model
+from .output import write_output
 
 
 def _same_file(first, second):
@@ -54,18 +55,11 @@ def main(argv=None):
         if evidence is not None:
             manifest["extraction"] = evidence
             manifest["limitations"][0] = "One dataclass record model under flat-records/v1; source application behavior is not statically verified"
-        # Exclusive creation by default avoids overwriting files created after preflight.
-        mode = "w" if args.force else "x"
-        with args.output.open(mode, encoding="utf-8", newline="\n") as stream:
-            stream.write(document)
+        write_output(args.output, document, force=args.force)
         if args.manifest:
-            with args.manifest.open(mode, encoding="utf-8", newline="\n") as stream:
-                json.dump(manifest, stream, indent=2)
-                stream.write("\n")
+            write_output(args.manifest, json.dumps(manifest, indent=2) + "\n", force=args.force)
         if extracted_spec:
-            with extracted_spec.open(mode, encoding="utf-8", newline="\n") as stream:
-                json.dump(spec, stream, indent=2)
-                stream.write("\n")
+            write_output(extracted_spec, json.dumps(spec, indent=2) + "\n", force=args.force)
         print(f"Compiled {manifest['record_count']} records → {args.output}")
         print(f"SHA-256 {manifest['artifact_sha256']}")
         if evidence is not None:
