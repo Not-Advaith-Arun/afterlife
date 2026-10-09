@@ -1,0 +1,21 @@
+{
+  "format": "afterlife-trace/v1",
+  "operations": [
+    {"op": "create", "record": {"id": "note-3"}},
+    {"op": "edit", "id": "note-3", "changes": {"title": "", "archived": true, "rating": 0}},
+    {"op": "edit", "id": "note-3", "changes": {"pages": null}},
+    {"op": "edit", "id": "note-3", "changes": {"rating": null, "pages": -1}},
+    {"op": "create", "record": {"id": "note-1"}},
+    {"op": "create", "record": {"id": "bad", "pages": true}},
+    {"op": "edit", "id": "note-3", "changes": {"body": "</script><img src=x onerror=alert(1)>"}},
+    {"op": "delete", "id": "note-2"},
+    {"op": "delete", "id": "note-2"},
+    {"op": "edit", "id": "note-1", "changes": {"id": "renamed"}},
+    {"op": "create", "record": {"id": "bad", "rating": 9007199254740992}},
+    {"op": "create", "record": {"id": "bad", "network": "https://example.invalid"}},
+    {"op": "edit", "id": "note-3", "changes": {"pages": 2.0, "rating": -9007199254740991}},
+    {"op": "edit", "id": "note-3", "changes": {"body": "a\r\nb\rc\n😀"}},
+    {"op": "edit", "id": "note-3", "changes": {"archived": 0}},
+    {"op": "create", "record": {"id": "\u001c"}}
+  ]
+}

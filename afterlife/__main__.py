@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from .compiler import CompileError, compile_app, load_json
+from .audit import audit_python_application
 from .source import extract_python_model
 from .output import write_output
 
@@ -18,10 +19,12 @@ def _same_file(first, second):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "audit-python":
+        return audit_main(argv[1:])
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-python' first to extract a supported dataclass model.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-python' first to extract a supported dataclass model, or 'audit-python' to report unsupported application behavior.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")
@@ -65,6 +68,32 @@ def main(argv=None):
         if evidence is not None:
             print(f"Extracted {evidence['model']} without executing source. Only the model module was analyzed; see docs/SOURCE_ADAPTER.md for behavior assumptions.")
         return 0
+    except (CompileError, OSError) as error:
+        print(f"afterlife: {error}", file=sys.stderr)
+        return 2
+
+
+def audit_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife audit-python", description="Report unsupported Python application behavior without executing source or generating an app.")
+    parser.add_argument("model", type=Path, help="the model module to extract")
+    parser.add_argument("--application-source", action="append", default=[], type=Path,
+                        help="application file to inspect; repeat for each file (imports are not followed)")
+    parser.add_argument("-o", "--output", type=Path, help="report JSON (default: stdout)")
+    parser.add_argument("--force", action="store_true", help="replace an existing report")
+    args = parser.parse_args(argv)
+    try:
+        if args.output:
+            if any(_same_file(args.output, source) for source in [args.model] + args.application_source):
+                raise CompileError("Report output must not overwrite source inputs")
+            if args.output.exists() and not args.force:
+                raise CompileError(f"{args.output} already exists; choose another path or pass --force")
+        report = audit_python_application(args.model, args.application_source)
+        serialized = json.dumps(report, indent=2, ensure_ascii=True) + "\n"
+        if args.output:
+            write_output(args.output, serialized, force=args.force)
+        else:
+            print(serialized, end="")
+        return 2 if report["findings"] else 0
     except (CompileError, OSError) as error:
         print(f"afterlife: {error}", file=sys.stderr)
         return 2
