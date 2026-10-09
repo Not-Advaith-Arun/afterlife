@@ -43,6 +43,8 @@ def export_csv_main(argv):
     parser.add_argument("--text-policy", choices=("literal", "afterlife"), required=True)
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--field", action="append", help="Explicit field to include plus ID; repeat. Omitted fields stay in the source backup")
+    parser.add_argument("--record-id", action="append", help="Explicit existing stored ID; repeat. Source record order is preserved")
     args = parser.parse_args(argv)
     try:
         if any(_same_file(args.output, source) for source in (args.spec, args.backup)):
@@ -50,11 +52,19 @@ def export_csv_main(argv):
         if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
             raise CompileError("CSV output must be a non-symlink regular file")
         from .csv_export import export_csv
-        text, count = export_csv(load_json(args.spec), load_json(args.backup), text_policy=args.text_policy)
+        spec, backup = load_json(args.spec), load_json(args.backup)
+        text, count = export_csv(spec, backup, text_policy=args.text_policy,
+                                 selected_fields=args.field, record_ids=args.record_id)
+        partial = args.field is not None or args.record_id is not None
         write_output(args.output, text, force=args.force)
         print(json.dumps({"format": "afterlife-csv-export-receipt/v1", "records": count,
                           "text_policy": args.text_policy, "csv_bytes": len(text.encode("utf-8")),
-                          "scope": "Complete app-bound backup validated before private CSV output. All ordered records/fields exported; native inputs unchanged. CSV contains private values and no embedded app identity or authenticity. Use the same explicit text policy for import-csv. Receipt omits IDs/field names/values; spreadsheet coercion cannot be undone."}))
+                          "partial": partial, "fields": len(args.field) if args.field is not None else len(spec["fields"]),
+                          "omitted_fields": len(spec["fields"]) - len(args.field) if args.field is not None else 0,
+                          "omitted_records": len(backup["records"]) - count,
+                          "scope": "Complete app-bound backup validated before private CSV output; native inputs unchanged. "
+                          + ("PARTIAL sharing copy: only explicit stored rows/fields plus IDs, in source/contract order. Not a full recovery backup. Use patch-csv for separately reviewed partial-column edits; import-csv still requires the complete contract. " if partial else "All ordered records/fields exported. ")
+                          + "CSV contains private values and no embedded app identity or authenticity. Keep the same explicit text policy on import. Receipt omits IDs/field names/values; spreadsheet coercion cannot be undone."}))
         return 0
     except (CompileError, OSError, ValueError) as exc:
         print("afterlife: " + str(exc), file=sys.stderr)

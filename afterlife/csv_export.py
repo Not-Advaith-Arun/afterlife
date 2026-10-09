@@ -6,12 +6,22 @@ from .compiler import CompileError, MAX_BYTES, validate_spec
 from .transfers import backup_records
 
 
-def export_csv(spec, backup, *, text_policy):
+def export_csv(spec, backup, *, text_policy, selected_fields=None, record_ids=None):
     if text_policy not in ("literal", "afterlife"):
         raise CompileError("Choose explicit literal or afterlife CSV text policy")
     spec = validate_spec(spec)
     records = backup_records(spec, backup)
-    columns = ["id", *[field["name"] for field in spec["fields"]]]
+    names = [field["name"] for field in spec["fields"]]
+    for supplied, known, label in ((selected_fields, set(names), "field"),
+                                    (record_ids, {row["id"] for row in records}, "record ID")):
+        if supplied is not None and (not isinstance(supplied, list) or not supplied
+                or any(not isinstance(value, str) or value not in known for value in supplied)
+                or len(set(supplied)) != len(supplied)):
+            raise CompileError(f"Selected {label} values must be nonempty, distinct and present in the complete backup contract")
+    columns = ["id", *[name for name in names if selected_fields is None or name in selected_fields]]
+    if record_ids is not None:
+        chosen = set(record_ids)
+        records = [row for row in records if row["id"] in chosen]
     output = io.StringIO(newline="")
     row_buffer = io.StringIO(newline="")
     writer = csv.writer(row_buffer, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
