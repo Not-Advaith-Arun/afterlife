@@ -36,6 +36,38 @@ def import_csv_main(argv):
         print('afterlife: '+str(exc),file=sys.stderr);return 2
 
 
+def export_projection_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife export-projection", description="Create a private exact-type partial JSON sharing copy, never a native recovery/import backup")
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("backup", type=Path)
+    parser.add_argument("--field", action="append", required=True)
+    parser.add_argument("--record-id", action="append", required=True)
+    parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if any(_same_file(args.output, source) for source in (args.spec, args.backup)):
+            raise CompileError("Sharing output must not overwrite source inputs")
+        if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+            raise CompileError("Sharing output must be a non-symlink regular file")
+        from .projection import selected_projection
+        from .compiler import MAX_BYTES, _canonical
+        spec, backup = load_json(args.spec), load_json(args.backup)
+        projected = selected_projection(spec, backup, fields=args.field, record_ids=args.record_id)
+        text = _canonical(projected) + "\n"
+        if len(text.encode("utf-8")) > MAX_BYTES:
+            raise CompileError("Sharing projection exceeds10 MiB")
+        write_output(args.output, text, force=args.force)
+        print(json.dumps({"format": "afterlife-projection-receipt/v1", "records": len(projected["records"]),
+                          "fields": len(projected["fields"]), "omitted_fields": projected["omitted_field_count"],
+                          "omitted_records": len(backup["records"]) - len(projected["records"]),
+                          "scope": "Private partial exact-type sharing copy saved. Not a full recovery backup or native import envelope; source files unchanged. Receipt omits IDs, field names and record values."}))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def export_csv_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife export-csv", description="Export a complete matching native backup to private typed CSV. Explicit afterlife policy prefixes each nonempty text cell once, matching browser export; literal policy keeps text unprotected and may be interpreted by spreadsheets. No inference or recovery of spreadsheet transformations.")
     parser.add_argument("spec", type=Path)
@@ -192,6 +224,8 @@ def main(argv=None):
         return patch_csv_main(argv[1:])
     if argv and argv[0] == "import-csv":
         return import_csv_main(argv[1:])
+    if argv and argv[0] == "export-projection":
+        return export_projection_main(argv[1:])
     if argv and argv[0] == "export-csv":
         return export_csv_main(argv[1:])
     if argv and argv[0] == "review-export":
