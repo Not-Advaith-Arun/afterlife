@@ -36,6 +36,30 @@ def import_csv_main(argv):
         print('afterlife: '+str(exc),file=sys.stderr);return 2
 
 
+def review_projection_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife review-projection", description="Save a private read-only partial sharing page; no full source contract, import, editing or execution")
+    parser.add_argument("projection", type=Path)
+    parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if _same_file(args.output, args.projection):
+            raise CompileError("Sharing review must not overwrite its source projection")
+        if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+            raise CompileError("Sharing review output must be a non-symlink regular file")
+        from .projection_view import render_projection
+        value = load_json(args.projection)
+        page = render_projection(value)
+        write_output(args.output, page, force=args.force)
+        print(json.dumps({"format": "afterlife-projection-review-receipt/v1", "records": len(value["records"]),
+                          "fields": len(value["fields"]), "claimed_omitted_fields": value["omitted_field_count"],
+                          "scope": "Private read-only partial sharing review saved. Basic included shape/types checked; no full contract, authenticity or current-state verification. Source unchanged; receipt omits IDs, field names and record values."}))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def export_projection_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife export-projection", description="Create a private exact-type partial JSON sharing copy, never a native recovery/import backup")
     parser.add_argument("spec", type=Path)
@@ -224,6 +248,8 @@ def main(argv=None):
         return patch_csv_main(argv[1:])
     if argv and argv[0] == "import-csv":
         return import_csv_main(argv[1:])
+    if argv and argv[0] == "review-projection":
+        return review_projection_main(argv[1:])
     if argv and argv[0] == "export-projection":
         return export_projection_main(argv[1:])
     if argv and argv[0] == "export-csv":
