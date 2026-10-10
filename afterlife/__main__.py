@@ -36,6 +36,44 @@ def import_csv_main(argv):
         print('afterlife: '+str(exc),file=sys.stderr);return 2
 
 
+def compare_projections_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife compare-projections", description="Read-only included-cell comparison; omissions never mean source deletions or additions")
+    parser.add_argument("left", type=Path)
+    parser.add_argument("right", type=Path)
+    parser.add_argument("--include-values", action="store_true", help="Explicit private detail; requires a private --output file")
+    parser.add_argument("--offset", type=int, default=0)
+    parser.add_argument("--limit", type=int, default=25)
+    parser.add_argument("-o", "--output", type=Path)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if (args.include_values or args.force) and args.output is None:
+            raise CompileError("Private details/force require an explicit output path")
+        if args.output is not None:
+            if any(_same_file(args.output, source) for source in (args.left, args.right)):
+                raise CompileError("Comparison output must not overwrite source inputs")
+            if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+                raise CompileError("Comparison output must be a non-symlink regular file")
+        from .projection_comparison import compare_projections
+        from .compiler import MAX_BYTES, _canonical
+        result = compare_projections(load_json(args.left), load_json(args.right), include_values=args.include_values,
+                                     offset=args.offset, limit=args.limit)
+        text = _canonical(result) + "\n"
+        if len(text.encode("utf-8")) > MAX_BYTES:
+            raise CompileError("Comparison exceeds10 MiB")
+        if args.output is None:
+            print(text, end="")
+        else:
+            write_output(args.output, text, force=args.force)
+            print(json.dumps({"format": "afterlife-projection-comparison-receipt/v1", "counts": result["counts"],
+                              "private_detail_saved": args.include_values,
+                              "scope": "Read-only comparison saved; source files unchanged. Receipt omits private IDs, field names and values. Inclusion differences never authorize source mutations."}))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def review_projection_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife review-projection", description="Save a private read-only partial sharing page; no full source contract, import, editing or execution")
     parser.add_argument("projection", type=Path)
@@ -248,6 +286,8 @@ def main(argv=None):
         return patch_csv_main(argv[1:])
     if argv and argv[0] == "import-csv":
         return import_csv_main(argv[1:])
+    if argv and argv[0] == "compare-projections":
+        return compare_projections_main(argv[1:])
     if argv and argv[0] == "review-projection":
         return review_projection_main(argv[1:])
     if argv and argv[0] == "export-projection":
