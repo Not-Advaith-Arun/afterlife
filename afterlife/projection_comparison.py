@@ -54,3 +54,51 @@ def compare_projections(left, right, *, include_values=False, offset=0, limit=25
                      'Only literal included values are compared; no semantic/Unicode normalization or hidden defaults. Left/right-only cells and rows describe inclusion only, never deletion/addition of source data. '
                      'Shared equality is null when no cells overlap and otherwise concerns that overlap only, never full collection parity. No merge, import, save or recovery authorization. '
                      'Private cell details are bounded and ordered by literal record ID then field name; default metadata omits IDs, field names and values.'}
+
+
+def render_comparison(result):
+    """Render only an internally computed comparison, never an imported report."""
+    import json
+    from html import escape
+
+    def literal(value):
+        return escape(json.dumps(value, ensure_ascii=False, allow_nan=False))
+
+    counts, detail = result['counts'], result['private_detail']
+    page = ['<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<meta name="referrer" content="no-referrer">'
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">'
+            '<title>Partial copy comparison</title><style>'
+            '*{box-sizing:border-box}body{margin:0;background:#151917;color:#edf3ee;font:17px/1.6 system-ui,sans-serif}'
+            'main{max-width:900px;margin:auto;padding:24px 18px}section,article{background:#222b26;border:1px solid #44574a;border-radius:14px;padding:18px;margin:16px 0}'
+            'h1{font-size:1.9rem}h2{font-size:1.2rem}h1,h2,pre,dd{overflow-wrap:anywhere}pre{white-space:pre-wrap;font:inherit;margin:6px 0}'
+            'dt{font-weight:600}dd{margin:0 0 14px}summary{cursor:pointer}summary:focus-visible{outline:2px solid currentColor;outline-offset:4px}'
+            '</style></head><body><main><h1>Partial copy comparison</h1><section><h2>Included overlap only</h2>']
+    equality = result['shared_values_equal']
+    page.append('<p id="overlap-verdict">' + ('No cells overlap; equality is unknown.' if equality is None else
+                'Included overlapping values match.' if equality else 'Some included overlapping values differ.') + '</p>')
+    page.append('<p>Left/right-only means included on just that side. It does not establish a source deletion or addition. Neither copy is a complete or current recovery snapshot.</p><dl id="counts">')
+    for key, value in counts.items():
+        page.append('<dt>' + escape(key.replace('_', ' ')) + '</dt><dd>' + str(value) + '</dd>')
+    page.append('</dl><details><summary>Comparison scope and limits</summary><p>' + escape(result['scope']) + '</p></details></section>')
+    if detail is None:
+        page.append('<section><h2>Metadata only</h2><p>Record IDs, field names and values are omitted. Private cells require an explicit include-values request when generating a separate private report.</p></section>')
+    else:
+        page.append('<section><h2>Bounded private detail page</h2><p id="page-scope">Offset ' + str(detail['offset']) +
+                    '; shown ' + str(len(detail['cells'])) + '; total differing or one-sided cells ' + str(detail['total_differing_or_one_sided_cells']) +
+                    '. Unchanged overlapping cells are not listed.</p><p id="next-page">' +
+                    ('Next offset: ' + str(detail['next_offset']) + '. Generate that page separately from the retained inputs.' if detail['next_offset'] is not None else
+                     'No later detail page. Earlier cells may be omitted when offset is above zero.') + '</p></section>')
+        for cell in detail['cells']:
+            page.append('<article><h2>' + escape(cell['kind']) + '</h2><dl><dt>Record ID (text)</dt><dd><pre>' + literal(cell['record_id']) +
+                        '</pre></dd><dt>Field (text)</dt><dd><pre>' + literal(cell['field']) + '</pre></dd>')
+            for side, label in (('before', 'Left'), ('after', 'Right')):
+                page.append('<dt>' + label + '</dt><dd>' + ('<pre>' + literal(cell[side]) + '</pre>' if cell[side + '_present'] else
+                            '<p>Not included on this side (unknown source value).</p>') + '</dd>')
+            page.append('</dl></article>')
+    page.append('<footer>Static read-only review. No editing, merge, import, recovery or network access. Claimed contract markers are not authenticated provenance.</footer></main></body></html>')
+    text = ''.join(page)
+    if len(text.encode('utf-8')) > 32 * 1024 * 1024:
+        raise CompileError('Comparison page exceeds32 MiB')
+    return text

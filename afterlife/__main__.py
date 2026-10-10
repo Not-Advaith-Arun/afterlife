@@ -40,6 +40,7 @@ def compare_projections_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife compare-projections", description="Read-only included-cell comparison; omissions never mean source deletions or additions")
     parser.add_argument("left", type=Path)
     parser.add_argument("right", type=Path)
+    parser.add_argument("--format", choices=("json", "html"), default="json", help="Static HTML requires --output; private cells still require --include-values")
     parser.add_argument("--include-values", action="store_true", help="Explicit private detail; requires a private --output file")
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=25)
@@ -47,8 +48,8 @@ def compare_projections_main(argv):
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if (args.include_values or args.force) and args.output is None:
-            raise CompileError("Private details/force require an explicit output path")
+        if (args.include_values or args.force or args.format == "html") and args.output is None:
+            raise CompileError("Private details, HTML or force require an explicit output path")
         if args.output is not None:
             if any(_same_file(args.output, source) for source in (args.left, args.right)):
                 raise CompileError("Comparison output must not overwrite source inputs")
@@ -64,9 +65,12 @@ def compare_projections_main(argv):
         if args.output is None:
             print(text, end="")
         else:
+            if args.format == "html":
+                from .projection_comparison import render_comparison
+                text = render_comparison(result)
             write_output(args.output, text, force=args.force)
             print(json.dumps({"format": "afterlife-projection-comparison-receipt/v1", "counts": result["counts"],
-                              "private_detail_saved": args.include_values,
+                              "private_detail_saved": args.include_values, "output_format": args.format,
                               "scope": "Read-only comparison saved; source files unchanged. Receipt omits private IDs, field names and values. Inclusion differences never authorize source mutations."}))
         return 0
     except (CompileError, OSError, ValueError) as exc:
