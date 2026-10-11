@@ -83,19 +83,22 @@ def review_projection_main(argv):
     parser.add_argument("projection", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--offset", type=int, default=0, help="Included record offset; positive offsets require --limit")
+    parser.add_argument("--limit", type=int, help="Render only1..100 included records; entire input is still validated")
     args = parser.parse_args(argv)
     try:
         if _same_file(args.output, args.projection):
             raise CompileError("Sharing review must not overwrite its source projection")
         if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
             raise CompileError("Sharing review output must be a non-symlink regular file")
-        from .projection_view import render_projection
+        from .projection_view import render_projection, projection_window
         value = load_json(args.projection)
-        page = render_projection(value)
+        page = render_projection(value, offset=args.offset, limit=args.limit)
+        window = projection_window(value, offset=args.offset, limit=args.limit)
         write_output(args.output, page, force=args.force)
         print(json.dumps({"format": "afterlife-projection-review-receipt/v1", "records": len(value["records"]),
-                          "fields": len(value["fields"]), "claimed_omitted_fields": value["omitted_field_count"],
-                          "scope": "Private read-only partial sharing review saved. Basic included shape/types checked; no full contract, authenticity or current-state verification. Source unchanged; receipt omits IDs, field names and record values."}))
+                          "fields": len(value["fields"]), "claimed_omitted_fields": value["omitted_field_count"], "display_window": window,
+                          "scope": "Private read-only partial sharing review saved. Display window is not redaction; unverified publisher prose may disclose unshown values. Basic included shape/types checked; no full contract, authenticity or current-state verification. Source unchanged; receipt omits IDs, field names and record values."}))
         return 0
     except (CompileError, OSError, ValueError) as exc:
         print("afterlife: " + str(exc), file=sys.stderr)

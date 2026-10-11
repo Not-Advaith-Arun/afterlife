@@ -50,8 +50,19 @@ def validate_projection(value):
     return value
 
 
-def render_projection(value):
+def projection_window(value, *, offset=0, limit=None):
+    if (type(offset) is not int or not 0 <= offset < MAX_RECORDS
+            or (limit is not None and (type(limit) is not int or not 1 <= limit <= 100))
+            or (limit is None and offset != 0) or offset >= len(value['records'])):
+        raise CompileError('Use an included record offset and an explicit1..100 limit for paging; default shows all records')
+    end = len(value['records']) if limit is None else min(len(value['records']), offset + limit)
+    return {'offset': offset, 'limit': limit, 'shown_records': end - offset, 'earlier_records': offset,
+            'later_records': len(value['records']) - end, 'next_offset': end if end < len(value['records']) else None}
+
+
+def render_projection(value, *, offset=0, limit=None):
     value = validate_projection(value)
+    window = projection_window(value, offset=offset, limit=limit)
     chunks, size = [], 0
     def append(text):
         nonlocal size
@@ -78,7 +89,14 @@ def render_projection(value):
            + escape(value['app_id']) + '</code></p><p>Claimed full-contract fingerprint: <code>'
            + escape(value['spec_fingerprint']) + '</code></p><details><summary>Publisher scope (unverified)</summary><pre>'
            + escape(value['scope']) + '</pre></details></section>')
-    for row in value['records']:
+    append('<section><h2>Display window</h2><p id="page-scope">Showing ' + str(window['shown_records']) +
+           ' of ' + str(len(value['records'])) + ' included records, starting at offset ' + str(window['offset']) +
+           '. Earlier included records not shown: ' + str(window['earlier_records']) +
+           '; later included records not shown: ' + str(window['later_records']) + '.</p><p>' +
+           ('Next offset: ' + str(window['next_offset']) + '. Generate the next page separately from the retained input.' if window['next_offset'] is not None else
+            'No later display page; earlier included records may still be omitted.') +
+           '</p><p>This page is a display window, not a newly redacted sharing copy or a complete collection. Publisher prose is still included and may describe or disclose unshown records. The entire input was shape/type checked before this window was rendered.</p></section>')
+    for row in value['records'][offset:offset + window['shown_records']]:
         append('<article><h2>Included record</h2><dl><dt>Record ID (text)</dt><dd><pre>' + literal(row['id']) + '</pre></dd>')
         for field in value['fields']:
             append('<dt>' + escape(field['name']) + ' (' + escape(field['type']) + ')</dt><dd><pre>'
