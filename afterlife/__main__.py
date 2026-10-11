@@ -102,6 +102,40 @@ def review_projection_main(argv):
         return 2
 
 
+def reselect_projection_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife reselect-projection", description="Derive a smaller private partial sharing copy without a full backup/contract; no hidden values or recovery")
+    parser.add_argument("projection", type=Path)
+    parser.add_argument("--field", action="append", required=True)
+    parser.add_argument("--record-id", action="append", required=True)
+    parser.add_argument("--keep-publisher-scope", action="store_true", help="Explicitly copy unverified publisher prose unchanged; it may expose dropped values or describe the earlier copy")
+    parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        if _same_file(args.output, args.projection):
+            raise CompileError("Reselected copy must not overwrite its input")
+        if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+            raise CompileError("Reselection output must be a non-symlink regular file")
+        from .projection import reselected_projection
+        from .compiler import MAX_BYTES, _canonical
+        source = load_json(args.projection)
+        result = reselected_projection(source, fields=args.field, record_ids=args.record_id,
+                                       keep_publisher_scope=args.keep_publisher_scope)
+        text = _canonical(result) + "\n"
+        if len(text.encode("utf-8")) > MAX_BYTES:
+            raise CompileError("Reselected sharing copy exceeds10 MiB")
+        write_output(args.output, text, force=args.force)
+        print(json.dumps({"format": "afterlife-projection-reselection-receipt/v1", "records": len(result["records"]),
+                          "fields": len(result["fields"]), "claimed_omitted_fields": result["omitted_field_count"],
+                          "dropped_included_records": len(source["records"]) - len(result["records"]),
+                          "publisher_scope_copied": args.keep_publisher_scope,
+                          "scope": "Private derived partial copy saved; input unchanged. Included shape/types checked, no full-contract or authenticity verification. Publisher prose omitted by default; explicit copied prose is unverified and may disclose dropped values or describe the earlier copy. Receipt omits record IDs, field names and values. Not a recovery/import backup."}))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def export_projection_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife export-projection", description="Create a private exact-type partial JSON sharing copy, never a native recovery/import backup")
     parser.add_argument("spec", type=Path)
@@ -292,6 +326,8 @@ def main(argv=None):
         return import_csv_main(argv[1:])
     if argv and argv[0] == "compare-projections":
         return compare_projections_main(argv[1:])
+    if argv and argv[0] == "reselect-projection":
+        return reselect_projection_main(argv[1:])
     if argv and argv[0] == "review-projection":
         return review_projection_main(argv[1:])
     if argv and argv[0] == "export-projection":
