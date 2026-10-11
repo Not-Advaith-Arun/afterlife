@@ -173,8 +173,8 @@ def read_file(path, maximum):
     return raw
 
 
-def load_json(path):
-    raw = read_file(path, MAX_BYTES)
+def load_json(path, *, maximum=MAX_BYTES):
+    raw = read_file(path, maximum)
     try:
         return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                           parse_constant=lambda value: (_ for _ in ()).throw(CompileError(f"Invalid JSON number: {value}")))

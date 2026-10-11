@@ -105,24 +105,47 @@ def review_projection_main(argv):
         return 2
 
 
+def _projection_choices(args):
+    if args.selection is None:
+        if args.field is None or args.record_id is None:
+            raise CompileError("Choose --selection or both --field and --record-id")
+        return args.field, args.record_id
+    if args.field is not None or args.record_id is not None:
+        raise CompileError("Selection file cannot be combined with inline field/record choices")
+    from .compiler import _object
+    selection = load_json(args.selection, maximum=4 * 1024 * 1024)
+    keys = {"format", "fields", "record_ids"}
+    _object(selection, "projection selection", keys, keys)
+    if selection["format"] != "afterlife-projection-selection/v1":
+        raise CompileError("Expected an afterlife-projection-selection/v1 file")
+    for values, maximum in ((selection["fields"], 32), (selection["record_ids"], 10000)):
+        if (not isinstance(values, list) or not 1 <= len(values) <= maximum
+                or any(not isinstance(value, str) or not value for value in values)
+                or len(set(values)) != len(values)):
+            raise CompileError("Selection requires distinct nonempty field/record strings within32 fields/10000 records")
+    return selection["fields"], selection["record_ids"]
+
+
 def reselect_projection_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife reselect-projection", description="Derive a smaller private partial sharing copy without a full backup/contract; no hidden values or recovery")
     parser.add_argument("projection", type=Path)
-    parser.add_argument("--field", action="append", required=True)
-    parser.add_argument("--record-id", action="append", required=True)
+    parser.add_argument("--field", action="append")
+    parser.add_argument("--record-id", action="append")
+    parser.add_argument("--selection", type=Path, help="Private bounded JSON field/record selection instead of inline IDs; format afterlife-projection-selection/v1")
     parser.add_argument("--keep-publisher-scope", action="store_true", help="Explicitly copy unverified publisher prose unchanged; it may expose dropped values or describe the earlier copy")
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if _same_file(args.output, args.projection):
+        if any(_same_file(args.output, source) for source in (args.projection, *([args.selection] if args.selection else []))):
             raise CompileError("Reselected copy must not overwrite its input")
         if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
             raise CompileError("Reselection output must be a non-symlink regular file")
         from .projection import reselected_projection
         from .compiler import MAX_BYTES, _canonical
+        fields, identities = _projection_choices(args)
         source = load_json(args.projection)
-        result = reselected_projection(source, fields=args.field, record_ids=args.record_id,
+        result = reselected_projection(source, fields=fields, record_ids=identities,
                                        keep_publisher_scope=args.keep_publisher_scope)
         text = _canonical(result) + "\n"
         if len(text.encode("utf-8")) > MAX_BYTES:
@@ -143,20 +166,22 @@ def export_projection_main(argv):
     parser = argparse.ArgumentParser(prog="afterlife export-projection", description="Create a private exact-type partial JSON sharing copy, never a native recovery/import backup")
     parser.add_argument("spec", type=Path)
     parser.add_argument("backup", type=Path)
-    parser.add_argument("--field", action="append", required=True)
-    parser.add_argument("--record-id", action="append", required=True)
+    parser.add_argument("--field", action="append")
+    parser.add_argument("--record-id", action="append")
+    parser.add_argument("--selection", type=Path, help="Private bounded JSON field/record selection instead of inline IDs; format afterlife-projection-selection/v1")
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     try:
-        if any(_same_file(args.output, source) for source in (args.spec, args.backup)):
+        if any(_same_file(args.output, source) for source in (args.spec, args.backup, *([args.selection] if args.selection else []))):
             raise CompileError("Sharing output must not overwrite source inputs")
         if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
             raise CompileError("Sharing output must be a non-symlink regular file")
         from .projection import selected_projection
         from .compiler import MAX_BYTES, _canonical
+        fields, identities = _projection_choices(args)
         spec, backup = load_json(args.spec), load_json(args.backup)
-        projected = selected_projection(spec, backup, fields=args.field, record_ids=args.record_id)
+        projected = selected_projection(spec, backup, fields=fields, record_ids=identities)
         text = _canonical(projected) + "\n"
         if len(text.encode("utf-8")) > MAX_BYTES:
             raise CompileError("Sharing projection exceeds10 MiB")
