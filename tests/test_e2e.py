@@ -111,3 +111,34 @@ class EndToEndTests(unittest.TestCase):
             bad = subprocess.run([sys.executable, str(app), "--state", str(model)], capture_output=True)
             self.assertNotEqual(bad.returncode, 0)
             self.assertEqual({p: p.read_bytes() for p in before}, before)
+
+
+    def test_real_runtime_backup_rebuild_and_foreign_envelopes_preserve_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            html, backup, rebuilt = root / "original.html", root / "backup.json", root / "rebuilt.html"
+            def cli(*args, expected=0):
+                result = subprocess.run([sys.executable, "-m", "afterlife", *map(str,args)], cwd=ROOT, text=True, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                return result
+            cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", html)
+            payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', html.read_text(), re.S)[1])
+            payload["records"][0]["title"] = "Unicode \u03bb </script> =1+1"
+            envelope = {"format": "afterlife-data/v1", "app_id": payload["spec"]["app_id"], "spec_fingerprint": payload["spec_fingerprint"], "records": payload["records"]}
+            result = subprocess.run(["node", "-e", "const fs=require('node:fs'); const {exportDataJSON}=require('./afterlife/runtime.js'); process.stdout.write(exportDataJSON(JSON.parse(fs.readFileSync(0,'utf8'))));"], cwd=ROOT, input=json.dumps(envelope), capture_output=True, text=True, check=True)
+            backup.write_text(result.stdout)
+            backup_bytes = backup.read_bytes()
+            cli("from-export", "examples/task-tracker/app.json", backup, "-o", rebuilt)
+            restored = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', rebuilt.read_text(), re.S)[1])
+            self.assertEqual(restored["records"], payload["records"])
+            saved = rebuilt.read_bytes()
+            for field in ("app_id", "spec_fingerprint", "format"):
+                wrong = {**envelope, field: "foreign"}
+                backup.write_text(json.dumps(wrong))
+                rejected_bytes = backup.read_bytes()
+                cli("from-export", "examples/task-tracker/app.json", backup, "-o", rebuilt, "--force", expected=2)
+                self.assertEqual(rebuilt.read_bytes(), saved)
+                self.assertEqual(backup.read_bytes(), rejected_bytes)
+            backup.write_bytes(backup_bytes)
+            cli("from-export", "examples/task-tracker/app.json", backup, "-o", backup, "--force", expected=2)
+            self.assertEqual(backup.read_bytes(), backup_bytes)
