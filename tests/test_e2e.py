@@ -54,6 +54,37 @@ class EndToEndTests(unittest.TestCase):
             self.assertIn("Literal default", output.read_text())
             self.assertEqual({p: p.read_bytes() for p in saved}, saved)
 
+    def test_actual_output_sync_and_replace_failures_preserve_prior_html(self):
+        # Drive the real CLI with filesystem failure injection: an exception
+        # before publication must not truncate the user's existing application.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output, alias = root / "app.html", root / "retained.html"
+            prior = b"Original independently retained application bytes"
+            output.write_bytes(prior); os.link(output,alias)
+            spec = ROOT / "examples/task-tracker/app.json"
+            data = ROOT / "examples/task-tracker/records.json"
+            inputs = {p:p.read_bytes() for p in (spec,data)}
+            code = ("import sys; from unittest.mock import patch; from afterlife.__main__ import main\n"
+                    "target=sys.argv.pop(1)\n"
+                    "with patch(target,side_effect=OSError('controlled publication failure')):\n"
+                    " raise SystemExit(main(sys.argv[1:]))\n")
+            for target in ("afterlife.output.os.fsync","afterlife.output.os.replace"):
+                failed = subprocess.run([sys.executable,"-c",code,target,str(spec),str(data),"-o",str(output),"--force"],
+                    cwd=ROOT,capture_output=True,text=True,timeout=10)
+                self.assertEqual(failed.returncode,2,failed.stdout+failed.stderr)
+                self.assertIn("controlled publication failure",failed.stderr)
+                self.assertEqual(output.read_bytes(),prior)
+                self.assertEqual(alias.read_bytes(),prior)
+                self.assertEqual(list(root.glob("*.pending")),[])
+                self.assertEqual(list(root.glob(".*.pending")),[])
+            success = subprocess.run([sys.executable,"-m","afterlife",str(spec),str(data),"-o",str(output),"--force"],
+                cwd=ROOT,capture_output=True,text=True,timeout=10)
+            self.assertEqual(success.returncode,0,success.stdout+success.stderr)
+            self.assertIn("afterlife-data",output.read_text())
+            self.assertEqual(alias.read_bytes(),prior)
+            self.assertEqual({p:p.read_bytes() for p in inputs},inputs)
+
     def test_audit_and_compile_protect_sources_and_existing_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "app.html"
