@@ -153,6 +153,43 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual({p: p.read_bytes() for p in before}, before)
 
 
+    def test_saved_backup_review_drives_guarded_restore_and_preserves_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def cli(*args, expected=0):
+                result = subprocess.run([sys.executable, "-m", "afterlife", *map(str,args)], cwd=ROOT,
+                    text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                return result
+            spec = ROOT / "examples/task-tracker/app.json"
+            app, current, incoming, review, restored = [root / name for name in ("app.html", "current.json", "incoming.json", "review.json", "restored.html")]
+            cli(spec, ROOT / "examples/task-tracker/records.json", "-o", app)
+            payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', app.read_text(), re.S)[1])
+            envelope = {"format":"afterlife-data/v1", "app_id":payload["spec"]["app_id"],
+                        "spec_fingerprint":payload["spec_fingerprint"], "records":payload["records"]}
+            current.write_text(json.dumps(envelope))
+            envelope["records"][0]["title"] = "Private reviewed change"
+            incoming.write_text(json.dumps(envelope))
+            originals = {p:p.read_bytes() for p in (spec,current,incoming)}
+            args = ("review-export", spec, incoming, "--against", current)
+            stdout = cli(*args, "--check", expected=1).stdout
+            cli(*args, "--check", "-o", review, expected=1)
+            self.assertEqual(review.read_text(), stdout)
+            self.assertNotIn("Private reviewed change", stdout)
+            saved = review.read_bytes()
+            cli(*args, "-o", review, expected=2)
+            alias = root / "alias.json"; os.link(current,alias)
+            symbolic = root / "symbolic.json"; symbolic.symlink_to(review)
+            for destination in (current,alias,symbolic):
+                cli(*args, "-o", destination, "--force", expected=2)
+            cli("from-export", spec, incoming, "--against", current, "--review", review, "-o", restored)
+            self.assertIn("Private reviewed change", restored.read_text())
+            incoming.write_text('{"records":[]}')
+            cli(*args, "-o", review, "--force", expected=2)
+            self.assertEqual(review.read_bytes(), saved)
+            incoming.write_bytes(originals[incoming])
+            self.assertEqual({p:p.read_bytes() for p in originals}, originals)
+
     def test_backup_review_matches_runtime_without_exposing_values_or_writing_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

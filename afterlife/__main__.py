@@ -104,12 +104,28 @@ def review_export_main(argv):
     parser.add_argument("spec", type=Path)
     parser.add_argument("backup", type=Path)
     parser.add_argument("--against", type=Path, required=True, help="Current matching JSON backup")
+    parser.add_argument("-o", "--output", type=Path, help="Atomically save a review for from-export --review, instead of stdout")
+    parser.add_argument("--force", action="store_true", help="Replace an existing saved review")
     parser.add_argument("--check", action="store_true", help="Exit 1 when normalized records or their array order differ; 2 for invalid input")
     args = parser.parse_args(argv)
     try:
+        if args.output:
+            if any(_same_file(args.output, source) for source in (args.spec, args.backup, args.against)):
+                raise CompileError("Review output must not overwrite source inputs")
+            if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+                raise CompileError("Review output must be a non-symlink regular file")
+            if args.output.exists() and not args.force:
+                raise CompileError("Review output already exists; choose another path or pass --force")
+            if not args.output.parent.is_dir():
+                raise CompileError("Review output directory does not exist")
         from .transfers import review_export
         result = review_export(load_json(args.spec), load_json(args.against), load_json(args.backup))
-        print(json.dumps(result, indent=2, ensure_ascii=True))
+        serialized = json.dumps(result, indent=2, ensure_ascii=True) + "\n"
+        if args.output:
+            write_output(args.output, serialized, force=args.force)
+            print(f"Saved backup review → {args.output}")
+        else:
+            print(serialized, end="")
         return int(args.check and result["current_records_sha256"] != result["incoming_records_sha256"])
     except (CompileError, OSError) as error:
         print(f"afterlife: {error}", file=sys.stderr)
