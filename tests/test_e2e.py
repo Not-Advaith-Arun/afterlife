@@ -1,5 +1,6 @@
 """The conversion boundary is reported through the CLI without replacing inputs."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,9 +16,9 @@ class EndToEndTests(unittest.TestCase):
             output = Path(directory) / "app.html"
             model = ROOT / "examples/python-loans/model.py"
             application = ROOT / "examples/python-loans/app.py"
-            def cli(*args, expected=0):
+            def cli(*args, expected=0, timeout=15):
                 result = subprocess.run([sys.executable, "-m", "afterlife", *map(str, args)],
-                                        cwd=ROOT, capture_output=True, text=True, timeout=15)
+                                        cwd=ROOT, capture_output=True, text=True, timeout=timeout)
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
                 return result
             report = json.loads(cli("audit-python", model, "--application-source", application,
@@ -25,6 +26,13 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(report["findings"])
             cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", output)
             before = output.read_bytes()
+            fifo = Path(directory) / "input.json"
+            os.mkfifo(fifo)
+            for arguments in ((fifo, "examples/task-tracker/records.json", "-o", output, "--force"),
+                              ("from-python", fifo, "examples/task-tracker/records.json", "-o", output, "--force"),
+                              ("audit-python", model, "--application-source", fifo)):
+                cli(*arguments, expected=2, timeout=3)
+                self.assertEqual(output.read_bytes(), before)
             cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", output,
                 expected=2)
             self.assertEqual(output.read_bytes(), before)

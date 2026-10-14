@@ -6,8 +6,10 @@ import base64
 import hashlib
 import html
 import json
+import os
 from pathlib import Path
 import re
+import stat
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_RECORDS = 10_000
@@ -158,12 +160,21 @@ def _unique_object(pairs):
     return result
 
 
-def load_json(path):
+def read_file(path, maximum):
+    """Bound reads to regular files; opening a FIFO must not wait for a writer."""
     path = Path(path)
-    with path.open("rb") as stream:
-        raw = stream.read(MAX_BYTES + 1)
-    if len(raw) > MAX_BYTES:
-        raise CompileError(f"{path}: file exceeds {MAX_BYTES} bytes")
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise CompileError(f"{path}: input must be a regular file")
+        raw = stream.read(maximum + 1)
+    if len(raw) > maximum:
+        raise CompileError(f"{path}: file exceeds {maximum} bytes")
+    return raw
+
+
+def load_json(path):
+    raw = read_file(path, MAX_BYTES)
     try:
         return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_object,
                           parse_constant=lambda value: (_ for _ in ()).throw(CompileError(f"Invalid JSON number: {value}")))

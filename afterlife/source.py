@@ -11,7 +11,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from .compiler import CompileError, validate_spec
+from .compiler import CompileError, read_file, validate_spec
 
 MAX_SOURCE_BYTES = 128 * 1024
 PROFILE = "afterlife-flat-records/v1"
@@ -54,10 +54,7 @@ def extract_python_model(path, *, app_id=None, title=None, record_label=None):
     rejected. This deliberately does not scan or claim to preserve other files.
     """
     path = Path(path)
-    with path.open("rb") as stream:
-        raw = stream.read(MAX_SOURCE_BYTES + 1)
-    if len(raw) > MAX_SOURCE_BYTES:
-        raise CompileError(f"Python model exceeds {MAX_SOURCE_BYTES} bytes")
+    raw = read_file(path, MAX_SOURCE_BYTES)
     try:
         tree = ast.parse(raw.decode("utf-8"), filename=str(path))
     except (SyntaxError, UnicodeDecodeError, ValueError, RecursionError) as error:

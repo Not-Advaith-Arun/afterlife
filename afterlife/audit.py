@@ -10,7 +10,7 @@ import ast
 import hashlib
 from pathlib import Path
 
-from .compiler import CAPABILITIES, CompileError
+from .compiler import CAPABILITIES, CompileError, read_file
 from .source import MAX_SOURCE_BYTES, extract_python_model
 
 
@@ -41,10 +41,7 @@ def audit_python_application(model_path, application_paths=()):
         "files": [], "findings": [],
     }
     for index, path in enumerate(paths):
-        with path.open("rb") as stream:
-            raw = stream.read(MAX_SOURCE_BYTES + 1)
-        if len(raw) > MAX_SOURCE_BYTES:
-            raise CompileError(f"{path}: source exceeds {MAX_SOURCE_BYTES} bytes")
+        raw = read_file(path, MAX_SOURCE_BYTES)
         report["files"].append({"source": str(path), "sha256": hashlib.sha256(raw).hexdigest(),
                                 "role": "model" if index == 0 else "application"})
         if index == 0:
