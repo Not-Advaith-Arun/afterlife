@@ -45,6 +45,10 @@ def main(argv=None):
         if any(_same_file(target, source) for target in targets for source in inputs):
             raise CompileError("Output paths must not overwrite source inputs")
         for target in targets:
+            if target.is_symlink():
+                raise CompileError(f"Output must not be a symbolic link: {target}")
+            if target.exists() and not target.is_file():
+                raise CompileError(f"Output must be a regular file: {target}")
             if target.exists() and not args.force:
                 raise CompileError(f"{target} already exists; choose another path or pass --force")
             if not target.parent.is_dir():

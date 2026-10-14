@@ -28,6 +28,19 @@ class EndToEndTests(unittest.TestCase):
             cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", output,
                 expected=2)
             self.assertEqual(output.read_bytes(), before)
+            manifest = Path(directory) / "manifest.json"
+            original_report = Path(directory) / "report.json"
+            original_report.write_text("preserve report")
+            manifest.symlink_to(original_report)
+            for invalid in (manifest, Path(directory)):
+                cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", output,
+                    "--manifest", invalid, "--force", expected=2)
+                self.assertEqual(output.read_bytes(), before)
+                self.assertEqual(original_report.read_text(), "preserve report")
+            manifest.unlink()
+            cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", output,
+                "--manifest", manifest, "--force")
+            self.assertEqual(json.loads(manifest.read_text())["record_count"], 3)
             source_before = model.read_bytes()
             cli("audit-python", model, "-o", model, "--force", expected=2)
             self.assertEqual(model.read_bytes(), source_before)
