@@ -438,6 +438,20 @@
     const viewChanged = () => { currentPage = 0; render(); };
     filterField.addEventListener("change", () => { refreshFilterValues(); viewChanged(); });
     filterValue.addEventListener("change", viewChanged);
+    const presenceLabel = node("label", "Field presence", "sort-label");
+    const presenceField = node("select"); presenceField.setAttribute("aria-label", "Presence field");
+    const presenceNone = node("option", "No presence filter"); presenceNone.value = ""; presenceField.append(presenceNone);
+    for (const field of spec.fields) {
+      const option = node("option", field.label); option.value = field.name; presenceField.append(option);
+    }
+    const presenceValue = node("select"); presenceValue.setAttribute("aria-label", "Field presence");
+    for (const [value,label] of [["empty","Empty value"],["present","Has value"]]) {
+      const option = node("option",label); option.value = value; presenceValue.append(option);
+    }
+    presenceValue.disabled = true;
+    presenceField.addEventListener("change", () => {presenceValue.disabled = !presenceField.value; viewChanged();});
+    presenceValue.addEventListener("change",viewChanged);
+    presenceLabel.append(presenceField,presenceValue);
     const integerFields = spec.fields.filter(field => field.type === "integer");
     const rangeControls = node("div", undefined, "sort-label");
     const rangeField = node("select"); rangeField.setAttribute("aria-label", "Integer range field");
@@ -480,6 +494,7 @@
       sortDirection.textContent = "Ascending";
       sortDirection.setAttribute("aria-pressed", "false");
       sortDirection.disabled = true;
+      presenceField.value = ""; presenceValue.value = "empty"; presenceValue.disabled = true;
       filterField.value = "";
       rangeField.value = ""; clearRange();
       refreshFilterValues();
@@ -510,6 +525,7 @@
     toolbar.append(searchLabel, searchFieldLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
     if (integerFields.length) toolbar.append(rangeControls);
+    toolbar.append(presenceLabel);
     const exportMatching = (format) => {
       if (committing) return tell("Wait for the current save to finish before downloading.", true);
       try {
@@ -723,6 +739,7 @@
     function currentView() {
       return sortRecords(spec, records.filter(record => matches(spec, record, search.value, searchField.value) &&
         (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value)) &&
+        (!presenceField.value || ((record[presenceField.value] === null || record[presenceField.value] === "") === (presenceValue.value === "empty"))) &&
         (!activeRange || record[activeRange.name] !== null &&
           (activeRange.low === null || record[activeRange.name] >= activeRange.low) &&
           (activeRange.high === null || record[activeRange.name] <= activeRange.high))), sortField.value, descending);
