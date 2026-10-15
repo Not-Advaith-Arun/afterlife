@@ -19,6 +19,8 @@ def _same_file(first, second):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "verify-artifact":
+        return verify_artifact_main(argv[1:])
     if argv and argv[0] == "audit-python":
         return audit_main(argv[1:])
     if argv and argv[0] == "review-export":
@@ -29,7 +31,7 @@ def main(argv=None):
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, or 'audit-python' to report unsupported application behavior.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")
@@ -94,6 +96,21 @@ def main(argv=None):
         if evidence is not None:
             print(f"Extracted {evidence['model']} without executing source. Only the model module was analyzed; see docs/SOURCE_ADAPTER.md for behavior assumptions.")
         return 0
+    except (CompileError, OSError) as error:
+        print(f"afterlife: {error}", file=sys.stderr)
+        return 2
+
+
+def verify_artifact_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife verify-artifact", description="Check retained HTML bytes against a supplied manifest without executing HTML; this is not authentication")
+    parser.add_argument("artifact", type=Path)
+    parser.add_argument("--manifest", required=True, type=Path)
+    args = parser.parse_args(argv)
+    try:
+        from .verification import verify_artifact
+        result = verify_artifact(args.artifact, args.manifest)
+        print(json.dumps(result, indent=2, ensure_ascii=True))
+        return 0 if result["matched"] else 1
     except (CompileError, OSError) as error:
         print(f"afterlife: {error}", file=sys.stderr)
         return 2
