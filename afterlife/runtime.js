@@ -431,10 +431,11 @@
     separateCopy.hidden = true;
     const undo = button("Undo delete", async () => {
       if (!lastDeleted) return;
-      if (records.length >= MAX_RECORDS) return tell("Record limit reached. Export your data before removing records.", true);
+      const entries = lastDeleted.entries || [lastDeleted];
+      if (records.length + entries.length > MAX_RECORDS) return tell("Record limit reached. Export your data before removing records.", true);
       const next = [...records];
-      next.splice(Math.min(lastDeleted.index, records.length), 0, lastDeleted.record);
-      if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell("Deleted record restored."); }
+      for (const entry of entries) next.splice(Math.min(entry.index, next.length), 0, entry.record);
+      if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell(entries.length === 1 ? "Deleted record restored." : "Deleted records restored."); }
     });
     undo.hidden = true;
     toolbar.append(searchLabel, sortLabel, sortDirection);
@@ -451,8 +452,21 @@
         tell(`Download requested for all ${matching.length} matching records in view order, including other pages. Full collection kept. ${format === "csv" ? "CSV text has an apostrophe prefix; use JSON for exact data." : "Keep the app file with this data export."}`);
       } catch (error) { tell(error.message, true); }
     };
+    const deleteMatching = button("Delete matching records", async () => {
+      if (committing) return tell("Wait for the current save to finish.", true);
+      if (dirty) return tell("Save or cancel editor changes before deleting matching records.", true);
+      const ids = new Set(currentView().map(record => record.id));
+      if (!ids.size) return tell("No matching records to delete.");
+      if (!confirm(`Delete all ${ids.size} matching records, including other pages? You can undo this deletion until the next import or reload.`)) return;
+      const entries = records.map((record, index) => ({record, index})).filter(entry => ids.has(entry.record.id));
+      if (await commit(records.filter(record => !ids.has(record.id)), {resetPage: true})) {
+        lastDeleted = {entries}; undo.hidden = false;
+        if (ids.has(currentId)) { panel.hidden = true; currentId = null; }
+        tell(`Deleted ${entries.length} matching records. Undo is available until the next import or reload.`);
+      }
+    }, "danger");
     toolbar.append(resetView, button("Export matching JSON", () => exportMatching("json")),
-      button("Export matching CSV", () => exportMatching("csv")), count, undo, separateCopy, newButton);
+      button("Export matching CSV", () => exportMatching("csv")), deleteMatching, count, undo, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
