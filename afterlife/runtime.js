@@ -55,6 +55,21 @@
     return normalizeRecords(spec, records);
   }
 
+  function sortRecords(spec, records, fieldName, descending = false) {
+    if (!fieldName) return [...records];
+    const field = spec.fields.find(item => item.name === fieldName);
+    if (!field) throw new Error("Choose a declared field to sort records.");
+    return records.map((record, index) => ({record, index})).sort((left, right) => {
+      const a = left.record[fieldName], b = right.record[fieldName];
+      const absentA = a === null || a === "", absentB = b === null || b === "";
+      if (absentA !== absentB) return absentA ? 1 : -1;
+      const x = typeof a === "string" ? a.toLowerCase() : a;
+      const y = typeof b === "string" ? b.toLowerCase() : b;
+      const compared = x < y ? -1 : x > y ? 1 : 0;
+      return (descending ? -compared : compared) || left.index - right.index;
+    }).map(item => item.record);
+  }
+
   function applyOperation(spec, records, operation) {
     if (!isObject(operation)) throw new Error("Operation must be an object.");
     const allowed = {create: ["op", "record"], edit: ["op", "id", "changes"], delete: ["op", "id"]};
@@ -239,6 +254,34 @@
     search.type = "search";
     search.placeholder = "Search any field…";
     searchLabel.append(search);
+    const sortLabel = node("label", "Sort records", "sort-label");
+    const sortField = node("select");
+    sortField.id = "sort-field";
+    const originalOrder = node("option", "Original order");
+    originalOrder.value = "";
+    sortField.append(originalOrder);
+    for (const field of spec.fields) {
+      const option = node("option", field.label);
+      option.value = field.name;
+      sortField.append(option);
+    }
+    sortLabel.append(sortField);
+    let descending = false;
+    const sortDirection = button("Ascending", () => {
+      descending = !descending;
+      sortDirection.textContent = descending ? "Descending" : "Ascending";
+      sortDirection.setAttribute("aria-pressed", String(descending));
+      currentPage = 0;
+      render();
+    });
+    sortDirection.setAttribute("aria-label", "Reverse sort direction");
+    sortDirection.setAttribute("aria-pressed", "false");
+    sortDirection.disabled = true;
+    sortField.addEventListener("change", () => {
+      sortDirection.disabled = !sortField.value;
+      currentPage = 0;
+      render();
+    });
     const count = node("p", "", "count");
     count.setAttribute("aria-live", "polite");
     const newButton = button("New " + (spec.record_label || "record"), () => openEditor());
@@ -260,7 +303,7 @@
       if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell("Deleted record restored."); }
     });
     undo.hidden = true;
-    toolbar.append(searchLabel, count, undo, separateCopy, newButton);
+    toolbar.append(searchLabel, sortLabel, sortDirection, count, undo, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -364,7 +407,7 @@
     function render() {
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
-      const visible = records.filter(record => matches(spec, record, search.value));
+      const visible = sortRecords(spec, records.filter(record => matches(spec, record, search.value)), sortField.value, descending);
       count.textContent = `${visible.length} of ${records.length} records`;
       pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
@@ -521,7 +564,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
+    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
   }
   if (typeof document !== "undefined") boot();
 })();

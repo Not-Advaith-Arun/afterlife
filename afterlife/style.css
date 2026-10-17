@@ -47,3 +47,5 @@ h2 { font-size: 1.3rem; margin: 0 0 24px; }
 footer { margin-top: 32px; font-size: .82rem; color: #526779; line-height: 1.6; }
 @media (max-width: 1000px) { .page-header { align-items: flex-start; } .workspace { flex-direction: column-reverse; } .editor, .records { width: 100%; } }
 @media (max-width: 650px) { #app { padding: 25px 16px; } .page-header { flex-direction: column; gap: 22px; } .file-actions { justify-content: flex-start; } .toolbar { gap: 12px; } .search-label { width: 100%; } .count { flex-basis: 100%; margin: 0; } .page-status { flex-basis: 100%; margin-bottom: 4px; } }
+
+.sort-label { display: grid; gap: 7px; width: 180px; font-size: .9rem; }
