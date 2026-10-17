@@ -70,6 +70,24 @@
     }).map(item => item.record);
   }
 
+  function exportCSV(spec, records) {
+    const columns = [{name: "id"}, ...spec.fields];
+    const quoted = (value, protectText = true) => {
+      let text = value === null ? "" : String(value);
+      if (protectText && typeof value === "string" && text) text = "'" + text;
+      return '"' + text.replaceAll('"', '""') + '"';
+    };
+    const rows = [columns.map(field => quoted(field.name, false)).join(",")];
+    let bytes = new TextEncoder().encode(rows[0] + "\r\n").byteLength;
+    for (const record of validateRecords(spec, records)) {
+      const row = columns.map(field => quoted(record[field.name])).join(",");
+      bytes += new TextEncoder().encode(row + "\r\n").byteLength;
+      if (bytes > MAX_BYTES) throw new Error("CSV exceeds 10 MiB. Use JSON or split the collection.");
+      rows.push(row);
+    }
+    return rows.join("\r\n") + "\r\n";
+  }
+
   function applyOperation(spec, records, operation) {
     if (!isObject(operation)) throw new Error("Operation must be an object.");
     const allowed = {create: ["op", "record"], edit: ["op", "id", "changes"], delete: ["op", "id"]};
@@ -243,6 +261,12 @@
         try {
           download(exportDataJSON(envelope()), spec.app_id + "-data.json", "application/json");
           tell("JSON download requested. Keep the app file with this export.");
+        } catch (error) { tell(error.message, true); }
+      }), button("Export CSV", () => {
+        if (committing) return tell("Wait for the current save to finish before downloading.", true);
+        try {
+          download(exportCSV(spec, records), spec.app_id + "-text.csv", "text/csv;charset=utf-8;header=present");
+          tell("CSV download requested. Text values have an apostrophe prefix; use JSON for exact data.");
         } catch (error) { tell(error.message, true); }
       }), button("Import JSON", () => fileInput.click()), fileInput);
     header.append(titleBlock, fileActions);
@@ -564,7 +588,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
+    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
   }
   if (typeof document !== "undefined") boot();
 })();

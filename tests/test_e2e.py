@@ -1,4 +1,7 @@
 """The conversion boundary is reported through the CLI without replacing inputs."""
+import csv
+import io
+import re
 import json
 import os
 from pathlib import Path
@@ -49,6 +52,15 @@ class EndToEndTests(unittest.TestCase):
             cli("examples/task-tracker/app.json", "examples/task-tracker/records.json", "-o", output,
                 "--manifest", manifest, "--force")
             self.assertEqual(json.loads(manifest.read_text())["record_count"], 3)
+            payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', output.read_text(), re.S)[1])
+            payload["records"][0]["title"] = '=1+1,"quoted"\nnext line'
+            csv_result = subprocess.run(["node", "-e", "const fs=require('node:fs'); const {exportCSV}=require('./afterlife/runtime.js'); const p=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(exportCSV(p.spec,p.records));"],
+                                        input=json.dumps(payload), cwd=ROOT, text=True, capture_output=True, check=True)
+            table = list(csv.reader(io.StringIO(csv_result.stdout)))
+            title_column = table[0].index("title")
+            self.assertEqual(table[1][title_column], "'=1+1,\"quoted\"\nnext line")
+            self.assertEqual(len(table), 4)
+            self.assertEqual(len(table[0]), len(table[1]))
             source_before = model.read_bytes()
             cli("audit-python", model, "-o", model, "--force", expected=2)
             self.assertEqual(model.read_bytes(), source_before)
