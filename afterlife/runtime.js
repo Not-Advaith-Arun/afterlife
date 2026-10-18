@@ -88,6 +88,19 @@
     return rows.join("\r\n") + "\r\n";
   }
 
+  function compareImport(spec, current, incoming) {
+    const before = new Map(validateRecords(spec, current).map(row => [row.id, row]));
+    const after = new Map(validateRecords(spec, incoming).map(row => [row.id, row]));
+    const added = [], removed = [], changed = [], unchanged = [];
+    for (const [id, row] of after) {
+      if (!before.has(id)) added.push(id);
+      else if (JSON.stringify(row) === JSON.stringify(before.get(id))) unchanged.push(id);
+      else changed.push(id);
+    }
+    for (const id of before.keys()) if (!after.has(id)) removed.push(id);
+    return {added, removed, changed, unchanged};
+  }
+
   function applyOperation(spec, records, operation) {
     if (!isObject(operation)) throw new Error("Operation must be an object.");
     const allowed = {create: ["op", "record"], edit: ["op", "id", "changes"], delete: ["op", "id"]};
@@ -391,6 +404,32 @@
     const lastPage = button("Last page", () => changePage(pageCount - 1));
     for (const control of [firstPage, previousPage, nextPage, lastPage]) control.setAttribute("aria-controls", "records");
     pagination.append(pageStatus, firstPage, previousPage, nextPage, lastPage);
+    let pendingImport = null;
+    const importReview = node("section", undefined, "editor import-review");
+    importReview.hidden = true;
+    importReview.setAttribute("aria-label", "Import review");
+    const importSummary = node("p");
+    const importChanges = node("details");
+    const importIDs = node("pre");
+    importChanges.append(node("summary", "Review affected record IDs"), importIDs);
+    const cancelImport = button("Cancel import", () => {
+      pendingImport = null; importReview.hidden = true; tell("Import cancelled. Current records kept.");
+    });
+    const applyImport = button("Apply import", async () => {
+      if (!pendingImport) return;
+      if (JSON.stringify(records) !== pendingImport.baseline) {
+        pendingImport = null; importReview.hidden = true;
+        return tell("Records changed after this preview. Choose the import file again to review current differences.", true);
+      }
+      if (dirty && !confirm("Discard unsaved editor changes and import?")) return;
+      const incoming = pendingImport.records;
+      if (await commit(incoming, {resetPage: true})) {
+        lastDeleted = null; undo.hidden = true; dirty = false; panel.hidden = true; currentId = null;
+        pendingImport = null; importReview.hidden = true;
+        tell(`Imported ${incoming.length} records.`);
+      }
+    }, "primary");
+    importReview.append(node("h2", "Review import"), importSummary, importChanges, applyImport, cancelImport);
     const layout = node("div", undefined, "workspace");
     const list = node("section", undefined, "records");
     list.id = "records";
@@ -449,7 +488,7 @@
     form.append(formActions);
     panel.append(panelTitle, form);
     layout.append(list, panel);
-    app.append(header, status, message, toolbar, pagination, layout,
+    app.append(header, status, message, toolbar, importReview, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
 
     function openEditor(record = null) {
@@ -612,15 +651,17 @@
       const file = fileInput.files[0];
       fileInput.value = "";
       if (!file) return;
+      pendingImport = null; importReview.hidden = true;
       try {
         if (file.size > MAX_BYTES) throw new Error("Import exceeds 10 MiB.");
         const imported = validateEnvelope(payload, JSON.parse(await file.text()));
-        if (!confirm(`Replace all ${records.length} records with ${imported.length} imported records? Export first if you need the current copy.`)) return;
-        if (dirty && !confirm("Discard unsaved editor changes and import?")) return;
-        if (await commit(imported, {resetPage: true})) {
-          lastDeleted = null; undo.hidden = true; dirty = false; panel.hidden = true; currentId = null;
-          tell(`Imported ${imported.length} records.`);
-        }
+        const differences = compareImport(spec, records, imported);
+        pendingImport = {records: imported, baseline: JSON.stringify(records)};
+        importSummary.textContent = `Replace ${records.length} records with ${imported.length}: ${differences.added.length} added, ${differences.removed.length} removed, ${differences.changed.length} changed, ${differences.unchanged.length} unchanged. Export first to keep the current copy.`;
+        importIDs.textContent = JSON.stringify(differences, null, 2);
+        importReview.hidden = false;
+        applyImport.focus();
+        tell("Import preview ready. Current records have not changed.");
       } catch (error) { tell("Import failed: " + error.message, true); }
     });
     search.addEventListener("input", () => { currentPage = 0; render(); });
@@ -639,7 +680,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
+    module.exports = {validateRecords, validateEnvelope, escapeJSON, matches, sortRecords, exportCSV, compareImport, defaultValue, applyOperation, storeIfCurrent, exportDataJSON};
   }
   if (typeof document !== "undefined") boot();
 })();

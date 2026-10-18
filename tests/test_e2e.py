@@ -61,6 +61,10 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(table[1][title_column], "'=1+1,\"quoted\"\nnext line")
             self.assertEqual(len(table), 4)
             self.assertEqual(len(table[0]), len(table[1]))
+            import_comparison = subprocess.run(["node", "-e", "const fs=require('node:fs'); const {compareImport}=require('./afterlife/runtime.js'); const p=JSON.parse(fs.readFileSync(0,'utf8')); let incoming=JSON.parse(JSON.stringify(p.records)); incoming[0].title='Edited'; incoming.splice(1,1); incoming.push({...incoming[0],id:'new'}); process.stdout.write(JSON.stringify(compareImport(p.spec,p.records,incoming)));"],
+                input=json.dumps(payload), cwd=ROOT, text=True, capture_output=True, check=True)
+            differences = json.loads(import_comparison.stdout)
+            self.assertEqual([len(differences[k]) for k in ("added", "removed", "changed", "unchanged")], [1,1,1,1])
             source_before = model.read_bytes()
             cli("audit-python", model, "-o", model, "--force", expected=2)
             self.assertEqual(model.read_bytes(), source_before)
