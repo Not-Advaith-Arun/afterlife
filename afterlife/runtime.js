@@ -390,7 +390,20 @@
     undo.hidden = true;
     toolbar.append(searchLabel, sortLabel, sortDirection);
     if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
-    toolbar.append(resetView, count, undo, separateCopy, newButton);
+    const exportMatching = (format) => {
+      if (committing) return tell("Wait for the current save to finish before downloading.", true);
+      try {
+        const matching = currentView();
+        if (format === "json") {
+          download(exportDataJSON({...envelope(), records: matching}), spec.app_id + "-matching-data.json", "application/json");
+        } else {
+          download(exportCSV(spec, matching), spec.app_id + "-matching-text.csv", "text/csv;charset=utf-8;header=present");
+        }
+        tell(`Download requested for all ${matching.length} matching records in view order, including other pages. Full collection kept. ${format === "csv" ? "CSV text has an apostrophe prefix; use JSON for exact data." : "Keep the app file with this data export."}`);
+      } catch (error) { tell(error.message, true); }
+    };
+    toolbar.append(resetView, button("Export matching JSON", () => exportMatching("json")),
+      button("Export matching CSV", () => exportMatching("csv")), count, undo, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -517,11 +530,15 @@
       render();
     }
 
+    function currentView() {
+      return sortRecords(spec, records.filter(record => matches(spec, record, search.value) &&
+        (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value))), sortField.value, descending);
+    }
+
     function render() {
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
-      const visible = sortRecords(spec, records.filter(record => matches(spec, record, search.value) &&
-        (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value))), sortField.value, descending);
+      const visible = currentView();
       count.textContent = `${visible.length} of ${records.length} records`;
       pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
