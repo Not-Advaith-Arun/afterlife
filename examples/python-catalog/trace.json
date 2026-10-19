@@ -1,0 +1,1 @@
+{"format":"afterlife-trace/v1","operations":[{"op":"create","record":{"id":"item-3","sku":"FIELD-03","name":"Ruler"}},{"op":"edit","id":"item-1","changes":{"quantity":3,"description":"Sold one"}},{"op":"edit","id":"item-3","changes":{"quantity":"many"}},{"op":"create","record":{"id":"item-1"}}]}

@@ -64,3 +64,34 @@ class EndToEndTests(unittest.TestCase):
             source_before = model.read_bytes()
             cli("audit-python", model, "-o", model, "--force", expected=2)
             self.assertEqual(model.read_bytes(), source_before)
+
+    def test_persistent_catalog_restart_matches_converted_mutations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory) / "catalog.json"
+            model = ROOT / "examples/python-catalog/model.py"
+            app = model.with_name("app.py")
+            spec = Path(directory) / "spec.json"
+            html = Path(directory) / "catalog.html"
+            before = {p: p.read_bytes() for p in model.parent.iterdir() if p.is_file()}
+            subprocess.run([sys.executable, "-m", "afterlife", "from-python", str(model),
+                            str(model.with_name("records.json")), "-o", str(html),
+                            "--extracted-spec", str(spec)], cwd=ROOT, check=True, capture_output=True)
+            last = None
+            for name in ("trace.json", "restart-trace.json"):
+                trace = model.with_name(name)
+                original = json.loads(subprocess.check_output([sys.executable, str(app),
+                    "--state", str(state), "--trace", str(trace)], cwd=ROOT, text=True))
+                if last is not None:
+                    self.assertEqual(original["initial"], last)
+                converted = subprocess.run(["node", "tests/trace_runtime.cjs"], cwd=ROOT,
+                    input=json.dumps({"spec": json.loads(spec.read_text()), "records": original["initial"],
+                                      "operations": json.loads(trace.read_text())["operations"]}),
+                    text=True, capture_output=True, check=True)
+                self.assertEqual(json.loads(converted.stdout), original)
+                last = original["outcomes"][-1]["records"]
+                self.assertEqual(json.loads(state.read_text())["records"], last)
+            self.assertEqual(len(last), 2)
+            self.assertTrue(next(r for r in last if r["id"] == "item-3")["discontinued"])
+            bad = subprocess.run([sys.executable, str(app), "--state", str(model)], capture_output=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertEqual({p: p.read_bytes() for p in before}, before)

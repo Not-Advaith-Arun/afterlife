@@ -1,0 +1,1 @@
+{"format":"afterlife-trace/v1","operations":[{"op":"edit","id":"item-3","changes":{"discontinued":true,"unit_price_cents":175}},{"op":"delete","id":"item-2"},{"op":"edit","id":"item-2","changes":{"quantity":1}},{"op":"edit","id":"item-1","changes":{"id":"changed"}}]}
