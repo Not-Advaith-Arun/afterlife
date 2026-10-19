@@ -306,6 +306,54 @@
       currentPage = 0;
       render();
     });
+    const filterFields = spec.fields.filter(field => ["boolean", "select"].includes(field.type));
+    const filterLabel = node("label", "Filter by", "sort-label");
+    const filterField = node("select");
+    filterField.id = "filter-field";
+    const noFilter = node("option", "All records");
+    noFilter.value = "";
+    filterField.append(noFilter);
+    for (const field of filterFields) {
+      const option = node("option", field.label);
+      option.value = field.name;
+      filterField.append(option);
+    }
+    filterLabel.append(filterField);
+    const filterValueLabel = node("label", "Filter value", "sort-label");
+    const filterValue = node("select");
+    filterValue.id = "filter-value";
+    filterValueLabel.append(filterValue);
+    const refreshFilterValues = () => {
+      filterValue.replaceChildren();
+      const all = node("option", "All values");
+      all.value = "*";
+      filterValue.append(all);
+      const field = filterFields.find(item => item.name === filterField.value);
+      filterValue.disabled = !field;
+      if (field) {
+        const values = field.type === "boolean" ? [true, false] : ["", ...field.options];
+        for (const value of values) {
+          const option = node("option", field.type === "boolean" ? (value ? "Yes" : "No") : value || "No value");
+          option.value = JSON.stringify(value);
+          filterValue.append(option);
+        }
+      }
+    };
+    refreshFilterValues();
+    const viewChanged = () => { currentPage = 0; render(); };
+    filterField.addEventListener("change", () => { refreshFilterValues(); viewChanged(); });
+    filterValue.addEventListener("change", viewChanged);
+    const resetView = button("Reset view", () => {
+      search.value = "";
+      sortField.value = "";
+      descending = false;
+      sortDirection.textContent = "Ascending";
+      sortDirection.setAttribute("aria-pressed", "false");
+      sortDirection.disabled = true;
+      filterField.value = "";
+      refreshFilterValues();
+      viewChanged();
+    });
     const count = node("p", "", "count");
     count.setAttribute("aria-live", "polite");
     const newButton = button("New " + (spec.record_label || "record"), () => openEditor());
@@ -327,7 +375,9 @@
       if (await commit(next)) { lastDeleted = null; undo.hidden = true; tell("Deleted record restored."); }
     });
     undo.hidden = true;
-    toolbar.append(searchLabel, sortLabel, sortDirection, count, undo, separateCopy, newButton);
+    toolbar.append(searchLabel, sortLabel, sortDirection);
+    if (filterFields.length) toolbar.append(filterLabel, filterValueLabel);
+    toolbar.append(resetView, count, undo, separateCopy, newButton);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
     const pageStatus = node("p", "", "page-status");
@@ -431,7 +481,8 @@
     function render() {
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
-      const visible = sortRecords(spec, records.filter(record => matches(spec, record, search.value)), sortField.value, descending);
+      const visible = sortRecords(spec, records.filter(record => matches(spec, record, search.value) &&
+        (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value))), sortField.value, descending);
       count.textContent = `${visible.length} of ${records.length} records`;
       pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
       currentPage = Math.max(0, Math.min(currentPage, pageCount - 1));
