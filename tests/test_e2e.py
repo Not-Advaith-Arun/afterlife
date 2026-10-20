@@ -65,6 +65,18 @@ class EndToEndTests(unittest.TestCase):
                 input=json.dumps(payload), cwd=ROOT, text=True, capture_output=True, check=True)
             differences = json.loads(import_comparison.stdout)
             self.assertEqual([len(differences[k]) for k in ("added", "removed", "changed", "unchanged")], [1,1,1,1])
+            backup = Path(directory) / "export.json"
+            backup_payload = {"format": "afterlife-data/v1", "app_id": payload["spec"]["app_id"], "spec_fingerprint": payload["spec_fingerprint"], "records": payload["records"]}
+            backup.write_text(json.dumps(backup_payload))
+            rebuilt = Path(directory) / "rebuilt.html"
+            cli("from-export", "examples/task-tracker/app.json", backup, "-o", rebuilt)
+            rebuilt_payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', rebuilt.read_text(), re.S)[1])
+            self.assertEqual(rebuilt_payload["records"], payload["records"])
+            rebuilt_bytes = rebuilt.read_bytes()
+            backup_payload["spec_fingerprint"] = "wrong"
+            backup.write_text(json.dumps(backup_payload))
+            cli("from-export", "examples/task-tracker/app.json", backup, "-o", rebuilt, "--force", expected=2)
+            self.assertEqual(rebuilt.read_bytes(), rebuilt_bytes)
             source_before = model.read_bytes()
             cli("audit-python", model, "-o", model, "--force", expected=2)
             self.assertEqual(model.read_bytes(), source_before)

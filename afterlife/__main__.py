@@ -21,10 +21,13 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "audit-python":
         return audit_main(argv[1:])
+    from_export = bool(argv and argv[0] == "from-export")
+    if from_export:
+        argv.pop(0)
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-python' first to extract a supported dataclass model, or 'audit-python' to report unsupported application behavior.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, or 'audit-python' to report unsupported application behavior.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")
@@ -58,7 +61,16 @@ def main(argv=None):
             spec, evidence = extract_python_model(args.spec, app_id=args.app_id, title=args.title, record_label=args.record_label)
         else:
             spec = load_json(args.spec)
-        document, manifest = compile_app(spec, load_json(args.data))
+        data = load_json(args.data)
+        if from_export:
+            from .compiler import validate_spec, _hash, _canonical
+            normalized_spec = validate_spec(spec)
+            if (not isinstance(data, dict) or set(data) != {"format", "app_id", "spec_fingerprint", "records"}
+                    or data["format"] != "afterlife-data/v1" or data["app_id"] != normalized_spec["app_id"]
+                    or data["spec_fingerprint"] != _hash(_canonical(normalized_spec))):
+                raise CompileError("JSON export must match this exact app specification")
+            data = {"records": data["records"]}
+        document, manifest = compile_app(spec, data)
         if evidence is not None:
             manifest["extraction"] = evidence
             manifest["limitations"][0] = "One dataclass record model under flat-records/v1; source application behavior is not statically verified"
