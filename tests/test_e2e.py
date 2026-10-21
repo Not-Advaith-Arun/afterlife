@@ -113,6 +113,61 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual({p: p.read_bytes() for p in before}, before)
 
 
+    def test_backup_review_matches_runtime_without_exposing_values_or_writing_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original, current, incoming = root / "app.html", root / "current.json", root / "incoming.json"
+            def cli(*args, expected=0):
+                result = subprocess.run([sys.executable, "-m", "afterlife", *map(str,args)], cwd=ROOT, text=True, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                return result
+            spec = ROOT / "examples/task-tracker/app.json"
+            cli(spec, ROOT / "examples/task-tracker/records.json", "-o", original)
+            payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', original.read_text(), re.S)[1])
+            envelope = {"format": "afterlife-data/v1", "app_id": payload["spec"]["app_id"],
+                        "spec_fingerprint": payload["spec_fingerprint"], "records": payload["records"]}
+            current.write_text(json.dumps(envelope))
+            rows = json.loads(json.dumps(payload["records"]))
+            rows[0]["title"] = "Private edited value never in review"
+            removed_id = rows.pop(1)["id"]
+            rows.append({**rows[0], "id": "new-record"})
+            incoming.write_text(json.dumps({**envelope, "records": rows}))
+            originals = {p: p.read_bytes() for p in (original, current, incoming, spec)}
+            checked = cli("review-export", spec, incoming, "--against", current)
+            reviewed = json.loads(checked.stdout)
+            self.assertEqual(reviewed["counts"], {"current": 3, "incoming": 3, "added": 1, "removed": 1, "changed": 1, "unchanged": 1})
+            self.assertEqual(reviewed["removed"], [removed_id])
+            self.assertEqual(reviewed["changed"], [{"id": rows[0]["id"], "fields": ["title"]}])
+            self.assertNotIn(rows[0]["title"], checked.stdout)
+            actual = subprocess.run(["node", "-e", "const fs=require('node:fs');const {compareImport}=require('./afterlife/runtime.js');const p=JSON.parse(fs.readFileSync(0,'utf8'));process.stdout.write(JSON.stringify(compareImport(p.spec,p.before,p.after)));"], cwd=ROOT,
+                input=json.dumps({"spec":payload["spec"], "before":payload["records"], "after":rows}), text=True, capture_output=True, check=True)
+            self.assertEqual({k:len(v) for k,v in json.loads(actual.stdout).items()}, {k:reviewed["counts"][k] for k in ("added","removed","changed","unchanged")})
+            self.assertEqual({p:p.read_bytes() for p in originals}, originals)
+            reordered = {**envelope, "records": list(reversed(payload["records"]))}
+            incoming.write_text(json.dumps(reordered))
+            order = json.loads(cli("review-export", spec, incoming, "--against", current).stdout)
+            self.assertEqual(order["changed"], [])
+            self.assertNotEqual(order["current_records_sha256"], order["incoming_records_sha256"])
+            for invalid in ({**envelope, "app_id":"foreign"}, {**envelope,"records":[rows[0],rows[0]]}):
+                incoming.write_text(json.dumps(invalid))
+                saved = incoming.read_bytes()
+                cli("review-export", spec, incoming, "--against", current, expected=2)
+                self.assertEqual(incoming.read_bytes(), saved)
+            self.assertEqual(current.read_bytes(), originals[current])
+            self.assertEqual(original.read_bytes(), originals[original])
+            expanded = json.loads(spec.read_text())
+            expanded["fields"] = [{"name": f"f{n}", "label": "Default", "type": "text", "default": "x" * 10000}
+                                  for n in range(20)]
+            large_spec, empty, compiled = root / "large-spec.json", root / "empty.json", root / "large.html"
+            large_spec.write_text(json.dumps(expanded))
+            empty.write_text('{"records":[]}')
+            cli(large_spec, empty, "-o", compiled)
+            large_payload = json.loads(re.search(r'id="afterlife-data">(.*?)</script>', compiled.read_text(), re.S)[1])
+            incoming.write_text(json.dumps({"format": "afterlife-data/v1", "app_id": expanded["app_id"],
+                "spec_fingerprint": large_payload["spec_fingerprint"], "records": [{"id": str(n)} for n in range(100)]}))
+            rejected = cli("review-export", large_spec, incoming, "--against", incoming, expected=2)
+            self.assertIn("Normalized backup data exceeds 10 MiB", rejected.stderr)
+
     def test_real_runtime_backup_rebuild_and_foreign_envelopes_preserve_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

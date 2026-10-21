@@ -21,6 +21,8 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "audit-python":
         return audit_main(argv[1:])
+    if argv and argv[0] == "review-export":
+        return review_export_main(argv[1:])
     from_export = bool(argv and argv[0] == "from-export")
     if from_export:
         argv.pop(0)
@@ -63,13 +65,8 @@ def main(argv=None):
             spec = load_json(args.spec)
         data = load_json(args.data)
         if from_export:
-            from .compiler import validate_spec, _hash, _canonical
-            normalized_spec = validate_spec(spec)
-            if (not isinstance(data, dict) or set(data) != {"format", "app_id", "spec_fingerprint", "records"}
-                    or data["format"] != "afterlife-data/v1" or data["app_id"] != normalized_spec["app_id"]
-                    or data["spec_fingerprint"] != _hash(_canonical(normalized_spec))):
-                raise CompileError("JSON export must match this exact app specification")
-            data = {"records": data["records"]}
+            from .transfers import backup_records
+            data = {"records": backup_records(spec, data)}
         document, manifest = compile_app(spec, data)
         if evidence is not None:
             manifest["extraction"] = evidence
@@ -83,6 +80,22 @@ def main(argv=None):
         print(f"SHA-256 {manifest['artifact_sha256']}")
         if evidence is not None:
             print(f"Extracted {evidence['model']} without executing source. Only the model module was analyzed; see docs/SOURCE_ADAPTER.md for behavior assumptions.")
+        return 0
+    except (CompileError, OSError) as error:
+        print(f"afterlife: {error}", file=sys.stderr)
+        return 2
+
+
+def review_export_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife review-export", description="Compare matching JSON backups without restoring or printing record values")
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("backup", type=Path)
+    parser.add_argument("--against", type=Path, required=True, help="Current matching JSON backup")
+    args = parser.parse_args(argv)
+    try:
+        from .transfers import review_export
+        result = review_export(load_json(args.spec), load_json(args.against), load_json(args.backup))
+        print(json.dumps(result, indent=2, ensure_ascii=True))
         return 0
     except (CompileError, OSError) as error:
         print(f"afterlife: {error}", file=sys.stderr)
