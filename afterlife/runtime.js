@@ -561,11 +561,11 @@
     app.append(header, status, message, toolbar, importReview, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
 
-    function openEditor(record = null) {
+    function openEditor(record = null, {duplicate = false} = {}) {
       if (committing) return tell("Wait for the current save to finish.", true);
       if (dirty && !confirm("Discard unsaved changes in the editor?")) return;
-      currentId = record ? record.id : null;
-      panelTitle.textContent = record ? "Edit " + (spec.record_label || "record") : "New " + (spec.record_label || "record");
+      currentId = record && !duplicate ? record.id : null;
+      panelTitle.textContent = (duplicate ? "Duplicate " : record ? "Edit " : "New ") + (spec.record_label || "record");
       for (const field of spec.fields) {
         const input = fieldInputs.get(field.name);
         const value = record ? record[field.name] : defaultValue(field);
@@ -634,7 +634,7 @@
           row.append(cell);
         }
         const actions = node("td", undefined, "row-actions");
-        actions.append(button("Edit", () => openEditor(record)), button("Delete", async () => {
+        actions.append(button("Edit", () => openEditor(record)), button("Duplicate", () => openEditor(record, {duplicate: true})), button("Delete", async () => {
           if (!confirm("Delete this record? You can undo the most recent deletion.")) return;
           const index = records.findIndex(item => item.id === record.id);
           if (await commitOperation({op: "delete", id: record.id})) {
