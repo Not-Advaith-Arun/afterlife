@@ -128,6 +128,19 @@ const {execFileSync} = require("node:child_process");
       assert.equal(await restored.evaluate(key => localStorage.getItem(key), restoredStorageKey), beforePrecisionImport);
     }
     const editedBackup = path.join(directory, "edited-backup.json");
+    const duplicateBackup = path.join(directory, "duplicate-keys.json");
+    const ordinaryBackup = JSON.stringify(exported);
+    const duplicates = [ordinaryBackup.replace('"records":[', '"records":[],"records":['),
+      ordinaryBackup.replace('"title":', '"title":"overwritten","title":'),
+      ordinaryBackup.replace('"title":', '"\\u0074itle":"overwritten","title":')];
+    for (const raw of duplicates) {
+      await fs.writeFile(duplicateBackup, raw);
+      await restored.locator("#import-file").setInputFiles(duplicateBackup);
+      await restored.getByText("Duplicate JSON key.", {exact: false}).waitFor({timeout: 2000});
+      assert.equal(await restored.getByRole("heading", {name: "Review import", exact: true}).isVisible(), false);
+      assert.equal(await restored.locator("tbody tr").count(), 4);
+      assert.equal(await restored.evaluate(key => localStorage.getItem(key), restoredStorageKey), beforePrecisionImport);
+    }
     const edited = JSON.parse(JSON.stringify(exported));
     edited.records[0].hours += 1;
     edited.records[0].notes = "Private incoming review detail";

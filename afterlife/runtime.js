@@ -87,14 +87,28 @@
 
   function parseDataJSON(text) {
     const value = JSON.parse(text); // Syntax remains the platform parser's responsibility.
-    let quoted = false, escaped = false;
+    let quoted = false, escaped = false, start = 0;
+    const containers = [];
     for (let index = 0; index < text.length; index += 1) {
       const character = text[index];
       if (quoted) {
         if (escaped) escaped = false;
         else if (character === "\\") escaped = true;
-        else if (character === '"') quoted = false;
-      } else if (character === '"') quoted = true;
+        else if (character === '"') {
+          quoted = false;
+          let next = index + 1;
+          while (next < text.length && /\s/.test(text[next])) next += 1;
+          if (text[next] === ":") {
+            const key = JSON.parse(text.slice(start, index + 1));
+            const keys = containers[containers.length - 1];
+            if (keys.has(key)) throw new Error("Duplicate JSON key.");
+            keys.add(key);
+          }
+        }
+      } else if (character === '"') { quoted = true; start = index; }
+      else if (character === "{") containers.push(new Set());
+      else if (character === "[") containers.push(null);
+      else if (character === "}" || character === "]") containers.pop();
       else if (character === "-" || /[0-9]/.test(character)) {
         let end = index + 1;
         while (end < text.length && /[0-9.eE+-]/.test(text[end])) end += 1;
