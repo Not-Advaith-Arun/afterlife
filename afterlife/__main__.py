@@ -19,6 +19,9 @@ def _same_file(first, second):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "showcase":
+        from .showcase import main as showcase_main
+        return showcase_main(argv[1:])
     if argv and argv[0] == "verify-build":
         return verify_build_main(argv[1:])
     if argv and argv[0] == "verify-artifact":
@@ -33,7 +36,7 @@ def main(argv=None):
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")

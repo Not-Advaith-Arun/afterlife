@@ -16,4 +16,4 @@ afterlife = "afterlife.__main__:main"
 packages = ["afterlife"]
 
 [tool.setuptools.package-data]
-afterlife = ["runtime.js", "style.css"]
+afterlife = ["runtime.js", "style.css", "ui/*.html", "ui/*.css", "ui/*.js"]
