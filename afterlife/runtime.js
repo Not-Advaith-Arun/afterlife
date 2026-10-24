@@ -356,6 +356,14 @@
           tell("CSV download requested. Text values have an apostrophe prefix; use JSON for exact data.");
         } catch (error) { tell(error.message, true); }
       }), button("Import JSON", () => fileInput.click()), fileInput);
+    const theme = button(document.documentElement.dataset.theme === "dark" ? "Light theme" : "Dark theme", () => {
+      const dark = document.documentElement.dataset.theme !== "dark";
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      theme.textContent = dark ? "Light theme" : "Dark theme";
+      theme.setAttribute("aria-pressed", String(dark));
+    });
+    theme.setAttribute("aria-pressed", String(document.documentElement.dataset.theme === "dark"));
+    fileActions.append(theme);
     header.append(titleBlock, fileActions);
 
     const toolbar = node("div", undefined, "toolbar");
