@@ -542,6 +542,37 @@
       refreshFilterValues();
       viewChanged();
     });
+    const sessionViews = new Map();
+    const viewPanel = node("section", undefined, "saved-views");
+    viewPanel.setAttribute("aria-label", "Session views");
+    const viewName = node("input");viewName.type="text";viewName.maxLength=80;viewName.setAttribute("aria-label","View name");viewName.placeholder="Name this review view…";
+    const viewChoice = node("select");viewChoice.setAttribute("aria-label","Saved session view");
+    const refreshViews = () => {const previous=viewChoice.value;viewChoice.replaceChildren();const empty=node("option","Choose a session view");empty.value="";viewChoice.append(empty);for(const name of sessionViews.keys()){const option=node("option",name);option.value=name;viewChoice.append(option);}if(sessionViews.has(previous))viewChoice.value=previous;};
+    const captureView = () => ({search:search.value,searchField:searchField.value,searchMode:searchMode.value,sort:sortField.value,secondary:secondaryField.value,descending,filter:filterField.value,value:filterValue.value,presence:presenceField.value,presenceValue:presenceValue.value,pageSize,summary:summaryField.value,range:activeRange?{...activeRange}:null});
+    const saveView = button("Save session view", () => {
+      const name=viewName.value.trim();
+      if(!name)return tell("Choose a view name first.",true);
+      if(name.length>80)return tell("View names must be at most80 characters.",true);
+      if(!sessionViews.has(name)&&sessionViews.size>=20)return tell("This tab already holds20 session views. Remove one first.",true);
+      if(sessionViews.has(name))return tell("That view name already exists. Remove it explicitly before saving a replacement.",true);
+      sessionViews.set(name,captureView());refreshViews();viewChoice.value=name;viewName.value="";tell("Session view saved in this tab only. Reloading or closing the tab removes it; records and downloaded apps are unchanged.");
+    });
+    const applyView = button("Apply session view", () => {
+      const saved=sessionViews.get(viewChoice.value);if(!saved)return tell("Choose a saved session view first.",true);
+      if(committing)return tell("Wait for the current save before changing views.",true);
+      search.value=saved.search;searchField.value=saved.searchField;searchMode.value=saved.searchMode;search.placeholder=saved.searchField?"Search selected field…":"Search any field…";
+      sortField.value=saved.sort;secondaryField.value=saved.secondary;secondaryField.disabled=!saved.sort;descending=saved.descending;
+      sortDirection.disabled=!saved.sort;sortDirection.textContent=descending?"Descending":"Ascending";sortDirection.setAttribute("aria-pressed",String(descending));
+      filterField.value=saved.filter;refreshFilterValues();filterValue.value=saved.value;
+      presenceField.value=saved.presence;presenceValue.value=saved.presenceValue;presenceValue.disabled=!saved.presence;
+      pageSize=saved.pageSize;pageSizeChoice.value=String(pageSize);summaryField.value=saved.summary;
+      rangeField.value=saved.range?.name||"";clearRange();activeRange=saved.range?{...saved.range}:null;
+      if(activeRange){minimum.value=activeRange.low===null?"":String(activeRange.low);maximum.value=activeRange.high===null?"":String(activeRange.high);}
+      currentPage=0;render();tell("Saved session view applied. This changes filters and ordering only; all records remain in the collection.");
+    });
+    const removeView = button("Remove session view", () => {if(!sessionViews.delete(viewChoice.value))return tell("Choose a saved session view first.",true);refreshViews();tell("Session view removed. Current filters and records are unchanged.");});
+    viewPanel.append(node("h2","Session views"),node("p","Keep up to20 named review views in this tab. They are not stored across reloads or included in downloads.","storage-note"),viewName,saveView,viewChoice,applyView,removeView);refreshViews();
+
     const count = node("p", "", "count");
     count.setAttribute("aria-live", "polite");
     const newButton = button("New " + (spec.record_label || "record"), () => openEditor());
@@ -764,7 +795,7 @@
     form.append(formActions);
     panel.append(panelTitle, form);
     layout.append(list, panel);
-    app.append(header, status, message, toolbar, importReview, pagination, layout,
+    app.append(header, status, message, toolbar, viewPanel, importReview, pagination, layout,
       node("footer", "Works without a server. Your downloaded HTML copy includes the app and its current records."));
 
     function openEditor(record = null, {duplicate = false} = {}) {
