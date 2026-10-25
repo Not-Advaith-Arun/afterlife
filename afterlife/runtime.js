@@ -121,8 +121,8 @@
     return value;
   }
 
-  function exportCSV(spec, records) {
-    const columns = [{name: "id"}, ...spec.fields];
+  function exportCSV(spec, records, selectedColumns = null) {
+    const columns = [{name: "id"}, ...spec.fields.filter(field => selectedColumns === null || selectedColumns.has(field.name))];
     const quoted = (value, protectText = true) => {
       let text = value === null ? "" : String(value);
       if (protectText && typeof value === "string" && text) text = "'" + text;
@@ -546,14 +546,14 @@
     const visibleFields = new Set(spec.fields.map(field => field.name));
     const columnChoices = new Map();
     const columnPanel = node("details", undefined, "column-choices");
-    columnPanel.append(node("summary", "Table columns"),node("p", "Choose columns for this tab. Hidden fields remain in search, sorting, editors and data exports. Printable output omits them only when you explicitly choose visible table columns. Hiding is not data removal.", "storage-note"));
+    columnPanel.append(node("summary", "Table columns"),node("p", "Choose columns for this tab. Hidden fields remain in search, editors and full JSON/app/CSV exports. Printable and matching CSV output omit them only with an explicit visible-column choice. Hiding is not data removal.", "storage-note"));
     const refreshColumns = () => {for(const [name,input] of columnChoices)input.checked=visibleFields.has(name);};
     for(const field of spec.fields){
       const label=node("label"),input=node("input");input.type="checkbox";input.checked=true;input.setAttribute("aria-label","Show "+field.label+" column");
       input.addEventListener("change",()=>{
         if(!input.checked&&visibleFields.size===1){input.checked=true;return tell("Keep at least one table column visible.",true);}
         if(input.checked)visibleFields.add(field.name);else visibleFields.delete(field.name);
-        render();tell("Table columns updated for this tab. Hidden fields remain in records and exports.");
+        render();tell("Table columns updated for this tab. Hidden fields remain in records and default data exports.");
       });label.append(input,document.createTextNode(field.label));columnChoices.set(field.name,input);columnPanel.append(label);
     }
     const resetView = button("Reset view", () => {
@@ -701,11 +701,13 @@
         if (format === "json") {
           download(exportDataJSON({...envelope(), records: matching}), spec.app_id + "-matching-data.json", "application/json");
         } else {
-          download(exportCSV(spec, matching), spec.app_id + "-matching-text.csv", "text/csv;charset=utf-8;header=present");
+          download(exportCSV(spec, matching, csvScope.value === "visible" ? visibleFields : null), spec.app_id + (csvScope.value === "visible" ? "-matching-visible-columns-text.csv" : "-matching-text.csv"), "text/csv;charset=utf-8;header=present");
         }
-        tell(`Download requested for all ${matching.length} matching records in view order, including other pages. Full collection kept. ${format === "csv" ? "CSV text has an apostrophe prefix; use JSON for exact data." : "Keep the app file with this data export."}`);
+        tell(`Download requested for all ${matching.length} matching records in view order, including other pages. Full collection kept. ${format === "csv" ? (csvScope.value === "visible" ? "Only visible table fields plus Record ID included. " : "All fields included. ")+"CSV text has an apostrophe prefix; use JSON for exact full-field data." : "Keep the app file with this data export."}`);
       } catch (error) { tell(error.message, true); }
     };
+    const csvScopeLabel=node("label","Matching CSV columns","sort-label"),csvScope=node("select");csvScope.setAttribute("aria-label","Matching CSV columns");
+    for(const [value,text] of [["all","All fields and Record ID"],["visible","Visible table columns and Record ID"]]){const option=node("option",text);option.value=value;csvScope.append(option);}csvScopeLabel.append(csvScope);
     const printScopeLabel=node("label","Printable columns","sort-label"),printScope=node("select");printScope.setAttribute("aria-label","Printable columns");
     for(const [value,text] of [["all","All fields and Record ID"],["visible","Visible table columns and Record ID"]]){const option=node("option",text);option.value=value;printScope.append(option);}printScopeLabel.append(printScope);
     const printMatching = button("Download printable view", () => {
@@ -775,7 +777,7 @@
     advancedContent.append(presenceLabel,pageSizeLabel);
     const exportsPanel=node("details",undefined,"toolbar-group export-actions");exportsPanel.open=window.matchMedia("(min-width: 900px)").matches;
     exportsPanel.append(node("summary","Exports and bulk actions"),exportControls);
-    exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),button("Download matching app",()=>saveHTML(true)),printScopeLabel,printMatching,deleteMatching);
+    exportControls.append(button("Export matching JSON",()=>exportMatching("json")),button("Export matching CSV",()=>exportMatching("csv")),csvScopeLabel,button("Download matching app",()=>saveHTML(true)),printScopeLabel,printMatching,deleteMatching);
     toolbar.append(resetView,count,undo,undoFieldUpdate,undoEdit,separateCopy,newButton,exportsPanel);
     const pagination = node("nav", undefined, "pagination");
     pagination.setAttribute("aria-label", "Record pages");
