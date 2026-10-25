@@ -467,6 +467,16 @@
     const viewChanged = () => { currentPage = 0; render(); };
     filterField.addEventListener("change", () => { refreshFilterValues(); viewChanged(); });
     filterValue.addEventListener("change", viewChanged);
+    const extraFilterLabel=node("label","Also filter by (AND)","sort-label"),extraFilterField=node("select");extraFilterField.setAttribute("aria-label","Additional category field");
+    const noExtra=node("option","No additional category");noExtra.value="";extraFilterField.append(noExtra);
+    for(const field of filterFields){const option=node("option",field.label);option.value=field.name;extraFilterField.append(option);}extraFilterLabel.append(extraFilterField);
+    const extraFilterValueLabel=node("label","Additional filter value","sort-label"),extraFilterValue=node("select");extraFilterValue.setAttribute("aria-label","Additional category value");extraFilterValueLabel.append(extraFilterValue);
+    const refreshExtraFilterValues=()=>{
+      extraFilterValue.replaceChildren();const all=node("option","All values");all.value="*";extraFilterValue.append(all);
+      const field=filterFields.find(item=>item.name===extraFilterField.value);extraFilterValue.disabled=!field;
+      if(field)for(const value of field.type==="boolean"?[true,false]:["",...field.options]){const option=node("option",field.type==="boolean"?(value?"Yes":"No"):value||"No value");option.value=JSON.stringify(value);extraFilterValue.append(option);}
+    };
+    refreshExtraFilterValues();extraFilterField.addEventListener("change",()=>{refreshExtraFilterValues();viewChanged();});extraFilterValue.addEventListener("change",viewChanged);
     const presenceLabel = node("label", "Field presence", "sort-label");
     const presenceField = node("select"); presenceField.setAttribute("aria-label", "Presence field");
     const presenceNone = node("option", "No presence filter"); presenceNone.value = ""; presenceField.append(presenceNone);
@@ -557,7 +567,7 @@
       presenceField.value = ""; presenceValue.value = "empty"; presenceValue.disabled = true;
       filterField.value = "";
       rangeField.value = ""; clearRange(); summaryField.value = "";
-      refreshFilterValues();
+      refreshFilterValues();extraFilterField.value="";refreshExtraFilterValues();
       viewChanged();
     });
     const sessionViews = new Map();
@@ -566,7 +576,7 @@
     const viewName = node("input");viewName.type="text";viewName.maxLength=80;viewName.setAttribute("aria-label","View name");viewName.placeholder="Name this review view…";
     const viewChoice = node("select");viewChoice.setAttribute("aria-label","Saved session view");
     const refreshViews = () => {const previous=viewChoice.value;viewChoice.replaceChildren();const empty=node("option","Choose a session view");empty.value="";viewChoice.append(empty);for(const name of sessionViews.keys()){const option=node("option",name);option.value=name;viewChoice.append(option);}if(sessionViews.has(previous))viewChoice.value=previous;};
-    const captureView = () => ({search:search.value,searchField:searchField.value,searchMode:searchMode.value,sort:sortField.value,secondary:secondaryField.value,descending,filter:filterField.value,value:filterValue.value,presence:presenceField.value,presenceValue:presenceValue.value,pageSize,summary:summaryField.value,range:activeRange?{...activeRange}:null,columns:[...visibleFields]});
+    const captureView = () => ({search:search.value,searchField:searchField.value,searchMode:searchMode.value,sort:sortField.value,secondary:secondaryField.value,descending,filter:filterField.value,value:filterValue.value,extraFilter:extraFilterField.value,extraValue:extraFilterValue.value,presence:presenceField.value,presenceValue:presenceValue.value,pageSize,summary:summaryField.value,range:activeRange?{...activeRange}:null,columns:[...visibleFields]});
     const saveView = button("Save session view", () => {
       const name=viewName.value.trim();
       if(!name)return tell("Choose a view name first.",true);
@@ -583,6 +593,7 @@
       sortField.value=saved.sort;secondaryField.value=saved.secondary;secondaryField.disabled=!saved.sort;descending=saved.descending;
       sortDirection.disabled=!saved.sort;sortDirection.textContent=descending?"Descending":"Ascending";sortDirection.setAttribute("aria-pressed",String(descending));
       filterField.value=saved.filter;refreshFilterValues();filterValue.value=saved.value;
+      extraFilterField.value=saved.extraFilter||"";refreshExtraFilterValues();extraFilterValue.value=saved.extraValue||"*";
       presenceField.value=saved.presence;presenceValue.value=saved.presenceValue;presenceValue.disabled=!saved.presence;
       pageSize=saved.pageSize;pageSizeChoice.value=String(pageSize);summaryField.value=saved.summary;
       rangeField.value=saved.range?.name||"";clearRange();activeRange=saved.range?{...saved.range}:null;
@@ -715,6 +726,7 @@
     toolbar.insertBefore(advanced,sortLabel);
     advancedContent.append(sortLabel,sortDirection,secondaryLabel);
     if(filterFields.length)advancedContent.append(filterLabel,filterValueLabel);
+    if(filterFields.length>1)advancedContent.append(extraFilterLabel,extraFilterValueLabel);
     if(integerFields.length)advancedContent.append(rangeControls,summaryLabel,integerSummary);
     advancedContent.append(presenceLabel,pageSizeLabel);
     const exportsPanel=node("details",undefined,"toolbar-group export-actions");exportsPanel.open=window.matchMedia("(min-width: 900px)").matches;
@@ -866,6 +878,7 @@
     function currentView() {
       return sortRecords(spec, records.filter(record => matches(spec, record, search.value, searchField.value, searchMode.value) &&
         (!filterField.value || filterValue.value === "*" || record[filterField.value] === JSON.parse(filterValue.value)) &&
+        (!extraFilterField.value || extraFilterValue.value === "*" || record[extraFilterField.value] === JSON.parse(extraFilterValue.value)) &&
         (!presenceField.value || ((record[presenceField.value] === null || record[presenceField.value] === "") === (presenceValue.value === "empty"))) &&
         (!activeRange || record[activeRange.name] !== null &&
           (activeRange.low === null || record[activeRange.name] >= activeRange.low) &&
@@ -876,7 +889,7 @@
       const focusedPageControl = pagination.contains(document.activeElement) ? document.activeElement : null;
       list.replaceChildren();
       const visible = currentView();
-      const advancedActive=Number(Boolean(sortField.value))+Number(Boolean(filterField.value&&filterValue.value!=="*"))+Number(Boolean(presenceField.value))+Number(Boolean(activeRange))+Number(Boolean(summaryField.value))+Number(pageSize!==PAGE_SIZE);
+      const advancedActive=Number(Boolean(sortField.value))+Number(Boolean(filterField.value&&filterValue.value!=="*"))+Number(Boolean(extraFilterField.value&&extraFilterValue.value!=="*"))+Number(Boolean(presenceField.value))+Number(Boolean(activeRange))+Number(Boolean(summaryField.value))+Number(pageSize!==PAGE_SIZE);
       advancedSummary.textContent="Filter and sort"+(advancedActive?" ("+advancedActive+" settings active)":"");
       count.textContent = `${visible.length} of ${records.length} records`;
       integerSummary.hidden = !summaryField.value;
