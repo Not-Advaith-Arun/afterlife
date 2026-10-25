@@ -745,14 +745,37 @@
           option.value = JSON.stringify([field.name, value]); bulkChoice.append(option);
         }
       }
+      const fieldUpdateProposal = () => {
+        if (!bulkChoice.value) return null;
+        const [name, value] = JSON.parse(bulkChoice.value);
+        const field = bulkFields.find(item => item.name === name);
+        const matching = currentView();
+        return {name, value, field,
+          display: field.type === "boolean" ? (value ? "Yes" : "No") : value || "No value",
+          matchingCount: matching.length,
+          changes: matching.filter(record => record[name] !== value)
+            .map(record => ({id: record.id, before: record[name], after: value}))};
+      };
+      const previewUpdate = button("Download matching update preview", () => {
+        if (committing) return tell("Wait for the current save to finish.", true);
+        const proposal = fieldUpdateProposal();
+        if (!proposal) return;
+        const preview = {format: "afterlife-field-update-preview/v1", app_id: spec.app_id,
+          spec_fingerprint: payload.spec_fingerprint, field: proposal.name, new_value: proposal.value,
+          total_records: records.length, matching_records: proposal.matchingCount, changes: proposal.changes,
+          scope: "Read-only snapshot of current in-tab records across all matching pages; unsaved editor inputs excluded. IDs and field values may be private. This file cannot apply an update and does not authorize a later change; filters and records can change."};
+        const serialized = JSON.stringify(preview, null, 2);
+        if (new Blob([serialized]).size > MAX_BYTES) return tell("Update preview exceeds 10 MiB. Narrow the matching view first.", true);
+        download(serialized, spec.app_id + "-field-update-preview.json", "application/json");
+        tell(`Downloaded preview of ${proposal.changes.length} field changes among ${proposal.matchingCount} matching records. No records changed; protect IDs and values in the file.`);
+      });
       const bulkUpdate = button("Update matching records", async () => {
         if (committing) return tell("Wait for the current save to finish.", true);
         if (dirty) return tell("Save or cancel editor changes before updating matching records.", true);
-        if (!bulkChoice.value) return;
-        const [name, value] = JSON.parse(bulkChoice.value);
-        const field = bulkFields.find(item => item.name === name);
-        const display = field.type === "boolean" ? (value ? "Yes" : "No") : value || "No value";
-        const ids = new Set(currentView().filter(record => record[name] !== value).map(record => record.id));
+        const proposal = fieldUpdateProposal();
+        if (!proposal) return;
+        const {name, value, field, display, changes} = proposal;
+        const ids = new Set(changes.map(change => change.id));
         if (!ids.size) return tell("No matching records need this field change. Current records kept.");
         if (!confirm(`Set ${field.label} to ${display} for ${ids.size} matching records, including other pages? You can undo this field update until another record change, import or reload.`)) return;
         const beforeUpdate = records.map(record => ({...record}));
@@ -763,9 +786,9 @@
           tell(`Updated ${ids.size} matching records: ${field.label} set to ${display}.`);
         }
       });
-      bulkUpdate.disabled = true;
-      bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value;});
-      exportControls.append(bulkChoice, bulkUpdate);
+      bulkUpdate.disabled = true; previewUpdate.disabled = true;
+      bulkChoice.addEventListener("change", () => {bulkUpdate.disabled = !bulkChoice.value; previewUpdate.disabled = !bulkChoice.value;});
+      exportControls.append(bulkChoice, previewUpdate, bulkUpdate);
     }
     const advanced=node("details",undefined,"toolbar-group advanced-filters"),advancedSummary=node("summary","Filter and sort"),advancedContent=node("div",undefined,"toolbar-group-content");
     advanced.open=window.matchMedia("(min-width: 900px)").matches;advanced.append(advancedSummary,advancedContent);

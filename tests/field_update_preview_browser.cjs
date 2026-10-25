@@ -1,0 +1,25 @@
+"use strict";
+const assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),{execFileSync}=require('node:child_process'),{pathToFileURL}=require('node:url');
+const {launch,offlineContext}=require('./browser_support.cjs');
+(async()=>{const tmp=await fs.mkdtemp(path.join(os.tmpdir(),'afterlife-combined-')),root=path.resolve(__dirname,'..');let browser;try{
+ const records=Array.from({length:605},(_,i)=>({id:'task-'+i,title:'Task '+i,status:['Planned','In progress','Done'][i%3],notes:'PRIVATE_NOTES',hours:i,important:i%2===0})),data=path.join(tmp,'data.json'),html=path.join(tmp,'app.html');await fs.writeFile(data,JSON.stringify({records}));execFileSync('python3',['-m','afterlife','examples/task-tracker/app.json',data,'-o',html],{cwd:root});const original=await fs.readFile(html);
+ browser=await launch();const context=await offlineContext(browser,{acceptDownloads:true}),page=await context.newPage(),errors=[],network=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(/^https?:/.test(r.url()))network.push(r.url());});await page.goto(pathToFileURL(html).href);const before=await page.evaluate(()=>JSON.stringify({...localStorage}));
+ await page.locator('#filter-field').selectOption('status');await page.locator('#filter-value').selectOption(JSON.stringify('Planned'));await page.getByLabel('Additional category field',{exact:true}).selectOption('important');await page.getByLabel('Additional category value',{exact:true}).selectOption('true');await page.locator('#sort-field').selectOption('hours');await page.getByRole('button',{name:'Reverse sort direction',exact:true}).click();const expected=records.filter(r=>r.status==='Planned'&&r.important).reverse();assert.equal(expected.length,101);assert.equal(await page.locator('tbody tr').count(),100);
+ const download=async name=>{const event=page.waitForEvent('download');await page.getByRole('button',{name,exact:true}).click();const result=path.join(tmp,Date.now()+'-'+name.replaceAll(' ','_')+(name==='Download printable view'?'.html':'.json'));await(await event).saveAs(result);return result;};
+ const selected=JSON.parse(await fs.readFile(await download('Export matching JSON'),'utf8')).records;assert.deepEqual(selected,expected);
+ await page.getByLabel('Matching field value',{exact:true}).selectOption(JSON.stringify(['important',true]));
+ const noop=JSON.parse(await fs.readFile(await download('Download matching update preview'),'utf8'));
+ assert.equal(noop.format,'afterlife-field-update-preview/v1');assert.equal(noop.matching_records,101);assert.deepEqual(noop.changes,[]);
+ await page.getByLabel('Matching field value',{exact:true}).selectOption(JSON.stringify(['important',false]));
+ const previewFile=await download('Download matching update preview'),preview=JSON.parse(await fs.readFile(previewFile,'utf8'));
+ assert.equal(preview.total_records,605);assert.equal(preview.matching_records,101);assert.equal(preview.field,'important');assert.equal(preview.new_value,false);
+ assert.deepEqual(preview.changes,expected.map(r=>({id:r.id,before:true,after:false})));
+ assert.match(preview.scope,/unsaved editor inputs excluded/);assert.equal(JSON.stringify(preview).includes('PRIVATE_NOTES'),false);
+ assert.equal(await page.evaluate(()=>JSON.stringify({...localStorage})),before);
+ await page.locator('#import-file').setInputFiles(previewFile);
+ await page.locator('#message').filter({hasText:/Import failed/}).waitFor();
+ assert.deepEqual(JSON.parse(await fs.readFile(await download('Export JSON'),'utf8')).records,records);
+ assert.equal(await page.evaluate(()=>JSON.stringify({...localStorage})),before);
+ await page.getByLabel('Matching field value',{exact:true}).selectOption(JSON.stringify(['important',false]));page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Update matching records',exact:true}).click();await page.locator('#message').filter({hasText:'Updated 101 matching records'}).waitFor();assert.equal(await page.locator('tbody tr').count(),0);const ids=new Set(expected.map(r=>r.id));assert.deepEqual(JSON.parse(await fs.readFile(await download('Export JSON'),'utf8')).records,records.map(r=>ids.has(r.id)?{...r,important:false}:r));await page.getByRole('button',{name:'Undo field update',exact:true}).click();assert.deepEqual(JSON.parse(await fs.readFile(await download('Export JSON'),'utf8')).records,records);assert.deepEqual(JSON.parse(await fs.readFile(await download('Export matching JSON'),'utf8')).records,expected);
+ await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(await fs.readFile(html),original);assert.deepEqual(errors,[]);assert.deepEqual(network,[]);console.log('Bulk-update preview:101 exact ordered changes across pages, no-op exclusion, metadata-only values, refused import, unchanged storage/source, exact update and undo passed');
+}finally{if(browser)await browser.close();await fs.rm(tmp,{recursive:true,force:true});}})().catch(error=>{console.error(error);process.exitCode=1;});
