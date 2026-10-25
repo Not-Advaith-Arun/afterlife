@@ -571,6 +571,7 @@
       viewChanged();
     });
     const sessionViews = new Map();
+    let viewRevision=0,presetReadVersion=0;
     const viewPanel = node("section", undefined, "saved-views");
     viewPanel.setAttribute("aria-label", "Session views");
     const viewName = node("input");viewName.type="text";viewName.maxLength=80;viewName.setAttribute("aria-label","View name");viewName.placeholder="Name this review view…";
@@ -583,7 +584,7 @@
       if(name.length>80)return tell("View names must be at most80 characters.",true);
       if(!sessionViews.has(name)&&sessionViews.size>=20)return tell("This tab already holds20 session views. Remove one first.",true);
       if(sessionViews.has(name))return tell("That view name already exists. Remove it explicitly before saving a replacement.",true);
-      sessionViews.set(name,captureView());refreshViews();viewChoice.value=name;viewName.value="";tell("Session view saved in this tab only. Reloading or closing the tab removes it; records and downloaded apps are unchanged.");
+      sessionViews.set(name,captureView());viewRevision++;refreshViews();viewChoice.value=name;viewName.value="";tell("Session view saved in this tab only. Reloading or closing the tab removes it; records and downloaded apps are unchanged.");
     });
     const applyView = button("Apply session view", () => {
       const saved=sessionViews.get(viewChoice.value);if(!saved)return tell("Choose a saved session view first.",true);
@@ -600,8 +601,51 @@
       if(activeRange){minimum.value=activeRange.low===null?"":String(activeRange.low);maximum.value=activeRange.high===null?"":String(activeRange.high);}
       currentPage=0;render();tell("Saved session view applied. This changes filters and ordering only; all records remain in the collection.");
     });
-    const removeView = button("Remove session view", () => {if(!sessionViews.delete(viewChoice.value))return tell("Choose a saved session view first.",true);refreshViews();tell("Session view removed. Current filters and records are unchanged.");});
-    viewPanel.append(node("h2","Session views"),node("p","Keep up to20 named review views in this tab. They are not stored across reloads or included in downloads.","storage-note"),viewName,saveView,viewChoice,applyView,removeView);refreshViews();
+    const removeView = button("Remove session view", () => {if(!sessionViews.delete(viewChoice.value))return tell("Choose a saved session view first.",true);viewRevision++;refreshViews();tell("Session view removed. Current filters and records are unchanged.");});
+    const exportViews=button("Download session views",()=>{
+      if(!sessionViews.size)return tell("Save at least one session view first.",true);
+      let serialized;try{const preset={format:"afterlife-views/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,views:[...sessionViews].map(([name,view])=>({name,view:validView(view)}))};serialized=JSON.stringify(preset,null,2);if(new Blob([serialized]).size>1024*1024)throw new Error("View presets exceed1 MiB; remove large views first.");}catch(error){return tell("Views not exported: "+error.message,true);}
+      download(serialized,spec.app_id+"-view-presets.json","application/json");tell("Downloaded view presets only. Search text and view names may be private; protect the file. Records were not exported or changed.");
+    });
+    const importViewsLabel=node("label","Import session views"),importViews=node("input");importViews.type="file";importViews.accept=".json,application/json";importViews.setAttribute("aria-label","Import session views");importViewsLabel.append(importViews);
+    const validView=view=>{
+      const keys=Object.keys(captureView());
+      if(!isObject(view)||Object.keys(view).length!==keys.length||keys.some(key=>!Object.hasOwn(view,key)))throw new Error("Invalid view settings.");
+      const option=(select,value)=>typeof value==="string"&&[...select.options].some(item=>item.value===value);
+      if(!validText(view.search,10000)||!option(searchField,view.searchField)||!option(searchMode,view.searchMode)||!option(sortField,view.sort)||!option(secondaryField,view.secondary)||typeof view.descending!=="boolean")throw new Error("Invalid search or sort settings.");
+      const category=(name,value)=>{
+        if(name==="")return value==="*";
+        const field=filterFields.find(item=>item.name===name);if(!field)return false;
+        return value==="*"||(field.type==="boolean"?[true,false]:["",...field.options]).some(item=>JSON.stringify(item)===value);
+      };
+      if(!category(view.filter,view.value)||!category(view.extraFilter,view.extraValue)||(filterFields.length<2&&view.extraFilter!==""))throw new Error("Invalid category settings.");
+      if(!option(presenceField,view.presence)||!option(presenceValue,view.presenceValue)||![25,50,100].includes(view.pageSize)||!option(summaryField,view.summary))throw new Error("Invalid presence, summary or page settings.");
+      if(!Array.isArray(view.columns)||!view.columns.length||view.columns.length>spec.fields.length||new Set(view.columns).size!==view.columns.length||view.columns.some(name=>!spec.fields.some(field=>field.name===name)))throw new Error("Invalid table columns.");
+      if(view.range!==null){
+        const range=view.range;
+        if(!isObject(range)||Object.keys(range).length!==3||!["name","low","high"].every(key=>Object.hasOwn(range,key))||!integerFields.some(field=>field.name===range.name)||[range.low,range.high].some(value=>value!==null&&!Number.isSafeInteger(value))||(range.low===null&&range.high===null)||(range.low!==null&&range.high!==null&&range.low>range.high))throw new Error("Invalid integer range.");
+      }
+      return view;
+    };
+    importViews.addEventListener("change",async()=>{
+      const version=++presetReadVersion,revision=viewRevision,file=importViews.files[0];if(!file)return;
+      try{
+        if(file.size>1024*1024)throw new Error("View preset file exceeds1 MiB.");
+        const preset=parseDataJSON(await file.text());if(version!==presetReadVersion)return;
+        if(revision!==viewRevision)throw new Error("Session views changed while reading. Reopen the file.");
+        if(!isObject(preset)||Object.keys(preset).length!==4||preset.format!=="afterlife-views/v1"||preset.app_id!==spec.app_id||preset.spec_fingerprint!==payload.spec_fingerprint||!Array.isArray(preset.views)||!preset.views.length||preset.views.length>20)throw new Error("Presets must match this app and specification, with1..20 views.");
+        const pending=new Map();
+        for(const entry of preset.views){
+          if(!isObject(entry)||Object.keys(entry).length!==2||typeof entry.name!=="string"||!entry.name.trim()||entry.name.length>80||entry.name!==entry.name.trim()||sessionViews.has(entry.name)||pending.has(entry.name))throw new Error("Invalid or duplicate view name. Existing views are never replaced.");
+          pending.set(entry.name,validView(entry.view));
+        }
+        if(sessionViews.size+pending.size>20)throw new Error("Import would exceed20 session views.");
+        for(const [name,view] of pending)sessionViews.set(name,view);
+        viewRevision++;refreshViews();tell("Imported "+pending.size+" session view(s). Choose and apply one explicitly; current filters and records are unchanged. Presets are not saved automatically across reloads.");
+      }catch(error){if(version===presetReadVersion)tell("Views not imported: "+error.message+" Existing views, filters and records kept.",true);}
+      finally{if(version===presetReadVersion)importViews.value="";}
+    });
+    viewPanel.append(node("h2","Session views"),node("p","Keep up to20 named review views in this tab. They are not stored automatically across reloads or included in record/app downloads; use the explicit preset file to keep them.","storage-note"),viewName,saveView,viewChoice,applyView,removeView,exportViews,importViewsLabel,node("p","Explicit presets contain view names and search/filter settings, not records. Search text can be private. Only matching app/spec presets import, up to1 MiB; existing view names are never replaced.","storage-note"));refreshViews();
 
     const count = node("p", "", "count");
     count.setAttribute("aria-live", "polite");
