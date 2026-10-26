@@ -330,16 +330,17 @@
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     };
-    const saveHTML = (matching = false) => {
+    const saveHTML = (matching = false, chosen = false) => {
       if (committing) return tell("Wait for the current save to finish before downloading.", true);
-      const selected = matching ? currentView() : records;
+      if(chosen&&!chosenIDs.size)return tell("Choose a record first.",true);
+      const selected = chosen ? records.filter(record=>chosenIDs.has(record.id)) : matching ? currentView() : records;
       const copy = document.documentElement.cloneNode(true);
       copy.querySelector("#app").replaceChildren();
       const suffix = [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
       copy.querySelector("#afterlife-data").textContent = escapeJSON({...payload, records: selected,
         storage_key: `afterlife:v1:${spec.app_id}:snapshot:${suffix}`});
-      download("<!doctype html>\n" + copy.outerHTML + "\n", spec.app_id + (matching ? "-matching-offline.html" : "-offline.html"), "text/html;charset=utf-8");
-      tell(matching ? `Download requested for all ${selected.length} matching records in view order, including other pages. App settings retained; full collection kept here. Open the downloaded HTML to verify your copy.` : "Download requested. Open the downloaded HTML file to verify your saved copy.");
+      download("<!doctype html>\n" + copy.outerHTML + "\n", spec.app_id + (chosen ? "-chosen-offline.html" : matching ? "-matching-offline.html" : "-offline.html"), "text/html;charset=utf-8");
+      tell(chosen ? `Downloaded an editable app with ${selected.length} explicitly chosen records and all fields, in original collection order. Other records, unsaved inputs and session choices excluded. This copy has an independent browser storage identity; protect the private file. Current collection kept.` : matching ? `Download requested for all ${selected.length} matching records in view order, including other pages. App settings retained; full collection kept here. Open the downloaded HTML to verify your copy.` : "Download requested. Open the downloaded HTML file to verify your saved copy.");
     };
     const fileInput = node("input");
     fileInput.type = "file";
@@ -798,7 +799,7 @@
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
-      chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
     }
     function exportChosen(kind){
       if(committing)return tell("Wait for the current save to finish.",true);
@@ -807,7 +808,8 @@
       try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected),spec.app_id+"-chosen-data."+(kind==="json"?"json":"csv"),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records with all fields. Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
     }
     const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    const chosenApp=button("Download chosen app",()=>saveHTML(false,true));
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
