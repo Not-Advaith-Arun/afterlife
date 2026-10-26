@@ -953,7 +953,23 @@
       currentId = null;
       newButton.focus();
     };
-    formActions.append(save, saveNext, button("Cancel", close));
+    const previewEdit=button("Download edit preview",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      if(stale)return tell(conflictWarning,true);
+      if(!currentId)return tell("Open an existing record to review its edits.",true);
+      try{
+        const before=records.find(row=>row.id===currentId);
+        if(!before)throw new Error("This record no longer exists. Reopen the editor.");
+        const proposed=editorRecord(currentId),{id,...changes}=proposed;
+        applyOperation(spec,records,{op:"edit",id,changes});
+        const fields=spec.fields.filter(field=>before[field.name]!==proposed[field.name]).map(field=>({field:field.name,before:before[field.name],after:proposed[field.name]}));
+        const text=JSON.stringify({format:"afterlife-edit-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,record_id:id,changes:fields,scope:"Unsaved editor proposal against this tab's current stored record only. Private field values included. No save, cross-tab freshness check or authorization for later application. This snapshot is not an apply plan; native Save still validates and coordinates publication."},null,2);
+        if(new Blob([text]).size>MAX_BYTES)throw new Error("Edit preview exceeds10 MiB.");
+        download(text,spec.app_id+"-edit-preview.json","application/json");tell(`Downloaded ${fields.length} proposed field changes. Record and browser storage unchanged; protect private field values.`);
+      }catch(error){tell("Edit preview refused: "+error.message,true);}
+    });
+    previewEdit.hidden=true;
+    formActions.append(save, saveNext, previewEdit, button("Cancel", close));
     form.append(continueHint, formActions);
     const editorNavigation = node("nav", undefined, "form-actions");
     editorNavigation.setAttribute("aria-label", "Matching record navigation");
@@ -990,7 +1006,7 @@
     }
 
     function refreshEditorNavigation() {
-      editorNavigation.hidden = saveNext.hidden = continueHint.hidden = currentId === null;
+      previewEdit.hidden = editorNavigation.hidden = saveNext.hidden = continueHint.hidden = currentId === null;
       if (currentId === null) return;
       const visible = currentView(), index = visible.findIndex(record => record.id === currentId);
       previousRecord.disabled = committing || index <= 0;
@@ -1163,17 +1179,12 @@
       catch (error) { tell(error.message, true); return false; }
     }
 
-    form.addEventListener("submit", async event => {
-      event.preventDefault();
-      const viewBeforeSave = currentView(), currentIndex = viewBeforeSave.findIndex(row => row.id === currentId);
-      const continueId = event.submitter === saveNext && currentIndex >= 0 ? viewBeforeSave[currentIndex + 1]?.id : null;
-      if (event.submitter === saveNext && !continueId) return tell("No next matching record. Use Save record to finish this edit.", true);
-      const random = () => [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
-      const record = {id: currentId || "r-" + random()};
+    function editorRecord(id) {
+      const record = {id};
       for (const field of spec.fields) {
         const input = fieldInputs.get(field.name);
         if (field.type === "integer" && input.value.trim() !== "" && !exactIntegerInput(input.value)) {
-          return tell(`${field.label} must be an exactly represented safe integer or null.`, true);
+          throw new Error(`${field.label} must be an exactly represented safe integer or null.`);
         }
         record[field.name] = field.type === "boolean" ? input.checked : field.type === "integer" ?
           (input.value.trim() === "" ? null : Number(input.value)) : input.value;
@@ -1182,6 +1193,17 @@
           record[field.name] = opened.original;
         }
       }
+      return record;
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const viewBeforeSave = currentView(), currentIndex = viewBeforeSave.findIndex(row => row.id === currentId);
+      const continueId = event.submitter === saveNext && currentIndex >= 0 ? viewBeforeSave[currentIndex + 1]?.id : null;
+      if (event.submitter === saveNext && !continueId) return tell("No next matching record. Use Save record to finish this edit.", true);
+      const random = () => [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
+      let record;
+      try{record=editorRecord(currentId || "r-" + random());}catch(error){return tell(error.message,true);}
       if (currentId && !records.some(item => item.id === currentId)) return tell("This record no longer exists. Reopen the editor.", true);
       const {id, ...changes} = record;
       const operation = currentId ? {op: "edit", id: currentId, changes} : {op: "create", record};
