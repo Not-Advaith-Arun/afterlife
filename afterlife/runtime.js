@@ -821,12 +821,12 @@
     }
     const selectionPanel=node("details",undefined,"toolbar-group chosen-records"),selectionHeading=node("summary","Chosen record handoff"),selectionContent=node("div",undefined,"toolbar-group-content");
     const chooseLabel=node("label"," Choose individual records"),chooseMode=node("input");chooseMode.type="checkbox";chooseLabel.prepend(chooseMode);
-    const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. No bulk update or deletion uses these choices.");
+    const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. Chosen-record deletion uses only these choices; matching-view updates and deletion remain separate.");
     const chosenCount=node("p");chosenCount.setAttribute("aria-live","polite");
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
-      chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
     }
     function exportChosen(kind){
       if(committing)return tell("Wait for the current save to finish.",true);
@@ -836,7 +836,26 @@
     }
     const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
     const chosenApp=button("Download chosen app",()=>saveHTML(false,true));
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    const previewChosenDelete=button("Preview chosen deletion",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      const ids=records.filter(row=>chosenIDs.has(row.id)).map(row=>row.id);if(!ids.length)return tell("Choose records explicitly first.",true);
+      const text=JSON.stringify({format:"afterlife-record-deletion-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,total_records:records.length,chosen_record_ids:ids,
+        scope:"Read-only proposed deletion of explicit chosen IDs in original collection order, across all filters/pages. Unsaved inputs excluded. IDs may be private. No deletion, save or cross-tab freshness check occurred. This file is not an apply plan; later deletion uses current choices and requires confirmation."},null,2);
+      if(new Blob([text]).size>MAX_BYTES)return tell("Chosen deletion preview exceeds10 MiB.",true);
+      download(text,spec.app_id+"-chosen-deletion-preview.json","application/json");tell(`Downloaded preview of ${ids.length} chosen record IDs. Nothing deleted; later confirmation uses current choices.`);
+    });
+    const deleteChosen=button("Delete chosen records",async()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      if(dirty)return tell("Save or cancel editor changes before deleting chosen records.",true);
+      const ids=new Set(records.filter(row=>chosenIDs.has(row.id)).map(row=>row.id));if(!ids.size)return tell("Choose records explicitly first.",true);
+      if(!confirm(`Delete ${ids.size} explicitly chosen records across all filters/pages? Other matching records are kept. Undo is available until the next import or reload.`))return;
+      const entries=records.map((record,index)=>({record,index})).filter(entry=>ids.has(entry.record.id));
+      if(await commit(records.filter(row=>!ids.has(row.id)),{resetPage:true})){
+        lastDeleted={entries};undo.hidden=false;if(ids.has(currentId)){panel.hidden=true;currentId=null;}
+        tell(`Deleted ${entries.length} explicitly chosen records. Other matching records kept. Undo is available until the next import or reload.`);
+      }
+    },"danger");
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,previewChosenDelete,deleteChosen,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
