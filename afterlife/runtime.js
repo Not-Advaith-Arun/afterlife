@@ -989,10 +989,12 @@
     const formActions = node("div", undefined, "form-actions");
     const save = node("button", "Save record", "primary");
     save.type = "submit";
+    const savePrevious = node("button", "Save and previous matching");
+    savePrevious.type = "submit";
     const saveNext = node("button", "Save and next matching");
     saveNext.type = "submit";
-    const continueHint = node("p", "Save and next uses the matching order before this edit is saved.");
-    saveNext.hidden = continueHint.hidden = true;
+    const continueHint = node("p", "Save and previous/next use the matching order before this edit is saved.");
+    savePrevious.hidden = saveNext.hidden = continueHint.hidden = true;
     const close = () => {
       if (committing) return tell("Wait for the current save to finish.", true);
       if (dirty && !confirm("Discard unsaved changes in the editor?")) return;
@@ -1017,7 +1019,7 @@
       }catch(error){tell("Edit preview refused: "+error.message,true);}
     });
     previewEdit.hidden=true;
-    formActions.append(save, saveNext, previewEdit, button("Cancel", close));
+    formActions.append(save, savePrevious, saveNext, previewEdit, button("Cancel", close));
     form.append(continueHint, formActions);
     const editorNavigation = node("nav", undefined, "form-actions");
     editorNavigation.setAttribute("aria-label", "Matching record navigation");
@@ -1076,11 +1078,12 @@
     }
 
     function refreshEditorNavigation() {
-      previewEdit.hidden = editorNavigation.hidden = saveNext.hidden = continueHint.hidden = currentId === null;
+      previewEdit.hidden = editorNavigation.hidden = savePrevious.hidden = saveNext.hidden = continueHint.hidden = currentId === null;
       if (currentId === null) return;
       const visible = currentView(), index = visible.findIndex(record => record.id === currentId);
       previousRecord.disabled = committing || index <= 0;
       nextRecord.disabled = committing || index < 0 || index >= visible.length - 1;
+      savePrevious.disabled = previousRecord.disabled;
       saveNext.disabled = nextRecord.disabled;
       editorPosition.textContent = index < 0 ? "Edited record is outside the current view" : `Matching record ${index + 1} of ${visible.length}`;
     }
@@ -1196,7 +1199,7 @@
     async function commit(next, {resetPage = false} = {}) {
       if (committing) { tell("A save is already in progress. Try again when it finishes.", true); return false; }
       committing = true;
-      save.disabled = saveNext.disabled = true;
+      save.disabled = savePrevious.disabled = saveNext.disabled = true;
       save.textContent = "Saving…";
       for (const input of fieldInputs.values()) input.disabled = true;
       try {
@@ -1269,8 +1272,9 @@
     form.addEventListener("submit", async event => {
       event.preventDefault();
       const viewBeforeSave = currentView(), currentIndex = viewBeforeSave.findIndex(row => row.id === currentId);
-      const continueId = event.submitter === saveNext && currentIndex >= 0 ? viewBeforeSave[currentIndex + 1]?.id : null;
-      if (event.submitter === saveNext && !continueId) return tell("No next matching record. Use Save record to finish this edit.", true);
+      const direction = event.submitter === saveNext ? 1 : event.submitter === savePrevious ? -1 : 0;
+      const continueId = direction && currentIndex >= 0 ? viewBeforeSave[currentIndex + direction]?.id : null;
+      if (direction && !continueId) return tell(`No ${direction < 0 ? "previous" : "next"} matching record. Use Save record to finish this edit.`, true);
       const random = () => [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, "0")).join("");
       let record;
       try{record=editorRecord(currentId || "r-" + random());}catch(error){return tell(error.message,true);}
@@ -1284,7 +1288,7 @@
         const following = continueId && currentView().find(row => row.id === continueId);
         if (following) {
           openEditor(following);
-          tell("Record saved. Opened the next matching record from the view before saving. Undo last edit remains available until another record change, import or reload.");
+          tell(`Record saved. Opened the ${direction < 0 ? "previous" : "next"} matching record from the view before saving. Undo last edit remains available until another record change, import or reload.`);
         } else {
           panel.hidden = true; currentId = null;
           tell(lastRecordEdit?"Record saved. Undo last edit is available in this tab until another record change, import or reload.":"Record saved.");
