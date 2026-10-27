@@ -821,12 +821,13 @@
     }
     const selectionPanel=node("details",undefined,"toolbar-group chosen-records"),selectionHeading=node("summary","Chosen record handoff"),selectionContent=node("div",undefined,"toolbar-group-content");
     const chooseLabel=node("label"," Choose individual records"),chooseMode=node("input");chooseMode.type="checkbox";chooseLabel.prepend(chooseMode);
-    const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. Chosen-record deletion uses only these choices; matching-view updates and deletion remain separate.");
+    const selectionScope=node("p","Choose records explicitly across filters and pages. Downloads include all fields, including hidden fields, in original collection order. Choices stay only in this tab, are not view presets, and clear after any saved record change/import/undo. Chosen-record deletion and field updates use only these choices; matching-view actions remain separate.");
     const chosenCount=node("p");chosenCount.setAttribute("aria-live","polite");
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
       previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
     }
     function exportChosen(kind){
       if(committing)return tell("Wait for the current save to finish.",true);
@@ -855,7 +856,35 @@
         tell(`Deleted ${entries.length} explicitly chosen records. Other matching records kept. Undo is available until the next import or reload.`);
       }
     },"danger");
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,previewChosenDelete,deleteChosen,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    const chosenFieldChoice=node("select");chosenFieldChoice.setAttribute("aria-label","Chosen field value");
+    const noChosenField=node("option","Choose field update…");noChosenField.value="";chosenFieldChoice.append(noChosenField);
+    for(const field of bulkFields)for(const value of field.type==="boolean"?[true,false]:[...(field.required?[]:[""]),...field.options]){
+      const option=node("option",`Set ${field.label} to ${field.type==="boolean"?(value?"Yes":"No"):value||"No value"}`);option.value=JSON.stringify([field.name,value]);chosenFieldChoice.append(option);
+    }
+    function chosenFieldProposal(){
+      if(!chosenFieldChoice.value)throw new Error("Choose a field update first.");
+      const [name,value]=JSON.parse(chosenFieldChoice.value),field=bulkFields.find(row=>row.name===name);if(!field)throw new Error("Unknown chosen field.");
+      const selected=records.filter(row=>chosenIDs.has(row.id)),ids=new Set(selected.map(row=>row.id));if(!ids.size)throw new Error("Choose records explicitly first.");
+      const next=records.map(row=>ids.has(row.id)?{...row,[name]:value}:row);prepareEnvelope(payload,{...envelope(),records:next},true);
+      return {field,value,next,chosen_records:selected.length,changes:selected.filter(row=>row[name]!==value).map(row=>({id:row.id,before:row[name],after:value}))};
+    }
+    const previewChosenField=button("Preview chosen field update",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      try{const proposal=chosenFieldProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:proposal.field.name,new_value:proposal.value,total_records:records.length,chosen_records:proposal.chosen_records,changes:proposal.changes,scope:"Readonly current-tab proposal for explicit chosen records across all filters/pages. Private IDs/values included; unsaved editor inputs excluded. Not an apply plan or freshness proof. Later update uses current choices/value and requires separate confirmation."},null,2);
+        if(new Blob([text]).size>MAX_BYTES)throw new Error("Chosen field preview exceeds10 MiB.");download(text,spec.app_id+"-chosen-field-preview.json","application/json");tell(`Downloaded ${proposal.changes.length} proposed chosen field changes; no records saved.`);
+      }catch(error){tell(error.message,true);}
+    });
+    const updateChosenField=button("Update chosen records",async()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      if(dirty)return tell("Save or cancel editor changes before updating chosen records.",true);
+      try{const proposal=chosenFieldProposal();if(!proposal.changes.length)return tell("Chosen records already have this value. Nothing changed.");
+        const display=proposal.field.type==="boolean"?(proposal.value?"Yes":"No"):proposal.value||"No value";
+        if(!confirm(`Set ${proposal.field.label} to ${display} for ${proposal.changes.length} explicitly chosen records across all filters/pages? Other records are kept; undo is available until another record change, import or reload.`))return;
+        const before=records.map(row=>({...row}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;panel.hidden=true;currentId=null;tell(`Updated ${proposal.changes.length} explicitly chosen records. Other records kept; undo last field update is available.`);}
+      }catch(error){tell(error.message,true);}
+    });
+    chosenFieldChoice.hidden=previewChosenField.hidden=updateChosenField.hidden=!bulkFields.length;chosenFieldChoice.addEventListener("change",refreshChosen);
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
