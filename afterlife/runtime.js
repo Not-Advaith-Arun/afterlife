@@ -139,11 +139,11 @@
     return rows.join("\r\n") + "\r\n";
   }
 
-  function printableRecords(spec, records, total, selectedColumns = null) {
+  function printableRecords(spec, records, total, selectedColumns = null, chosen = false) {
     const escape = value => String(value).replace(/[&<>"']/g, character => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"})[character]);
     const columns = [{name:"id",label:"Record ID",type:"text"}, ...spec.fields.filter(field => selectedColumns === null || selectedColumns.has(field.name))];
     const columnScope = selectedColumns === null ? "All record fields and Record ID included." : `${columns.length - 1} of ${spec.fields.length} table fields included, plus Record ID. Hidden table fields are omitted from this printable file only; other data exports still contain them.`;
-    const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${escape(spec.title)} — Printable records</title><style>body{font:12px/1.5 system-ui,sans-serif;color:#111;margin:2rem}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;vertical-align:top;border:1px solid #999;padding:.4rem;overflow-wrap:anywhere;white-space:pre-wrap}thead{display:table-header-group}tr{break-inside:avoid}@page{margin:15mm}@media print{body{margin:0}}</style></head><body><h1>${escape(spec.title)}</h1><p>${records.length} matching records of ${total}, in selected view order, including every page. ${columnScope} Static readable report; use JSON or the app file for an exact editable backup.</p><table><thead><tr>${columns.map(field => `<th scope="col">${escape(field.label)}</th>`).join("")}</tr></thead><tbody>`;
+    const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><title>${escape(spec.title)} — Printable records</title><style>body{font:12px/1.5 system-ui,sans-serif;color:#111;margin:2rem}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;vertical-align:top;border:1px solid #999;padding:.4rem;overflow-wrap:anywhere;white-space:pre-wrap}thead{display:table-header-group}tr{break-inside:avoid}@page{margin:15mm}@media print{body{margin:0}}</style></head><body><h1>${escape(spec.title)}</h1><p>${records.length} ${chosen ? "explicitly chosen records of "+total+", in original collection order across all filters/pages." : "matching records of "+total+", in selected view order, including every page."} ${columnScope} Static readable report; use JSON or the app file for an exact editable backup.</p><table><thead><tr>${columns.map(field => `<th scope="col">${escape(field.label)}</th>`).join("")}</tr></thead><tbody>`;
     const tail = "</tbody></table></body></html>";
     const parts = [head];
     const encoder = new TextEncoder();
@@ -826,7 +826,7 @@
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
-      previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
       previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
     }
     function exportChosen(kind){
@@ -836,6 +836,11 @@
       try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected),spec.app_id+"-chosen-data."+(kind==="json"?"json":"csv"),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records with all fields. Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
     }
     const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
+    const chosenPrint=button("Download chosen printable view",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      if(!chosenIDs.size)return tell("Choose records explicitly first.",true);
+      try{const selected=records.filter(row=>chosenIDs.has(row.id));download(printableRecords(spec,selected,records.length,printScope.value==="visible"?visibleFields:null,true),spec.app_id+"-chosen-print.html","text/html;charset=utf-8");tell(`Downloaded printable view of ${selected.length} explicitly chosen records in original order. Printable columns setting applies; editable exports still keep all fields. Current records unchanged.`);}catch(error){tell(error.message,true);}
+    });
     const chosenApp=button("Download chosen app",()=>saveHTML(false,true));
     const previewChosenDelete=button("Preview chosen deletion",()=>{
       if(committing)return tell("Wait for the current save to finish.",true);
@@ -884,7 +889,7 @@
       }catch(error){tell(error.message,true);}
     });
     chosenFieldChoice.hidden=previewChosenField.hidden=updateChosenField.hidden=!bulkFields.length;chosenFieldChoice.addEventListener("change",refreshChosen);
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,chosenPrint,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     if(integerFields.length){
       const numericField=node("select");numericField.setAttribute("aria-label","Chosen integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
       for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
