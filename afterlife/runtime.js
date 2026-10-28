@@ -885,6 +885,34 @@
     });
     chosenFieldChoice.hidden=previewChosenField.hidden=updateChosenField.hidden=!bulkFields.length;chosenFieldChoice.addEventListener("change",refreshChosen);
     chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    if(integerFields.length){
+      const numericField=node("select");numericField.setAttribute("aria-label","Chosen integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
+      for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
+      const numericValue=node("input");numericValue.type="text";numericValue.inputMode="numeric";numericValue.maxLength=MAX_INTEGER_INPUT_LENGTH;numericValue.setAttribute("aria-label","Chosen integer value");numericValue.placeholder="Exact integer; blank means null";
+      const numericScope=node("p","Explicit integer assignment for explicitly chosen records across filters/pages. Blank means null, allowed only for optional fields. No arithmetic or inferred values. Preview excludes unsaved editor inputs; private IDs/values are included in the file.","storage-note");
+      function numericProposal(){
+        const field=integerFields.find(row=>row.name===numericField.value);if(!field)throw new Error("Choose an integer field first.");
+        const raw=numericValue.value.trim();if(raw&&!exactIntegerInput(raw))throw new Error("Use an exactly represented safe integer or blank for null.");
+        const value=raw?Number(raw):null,chosen=records.filter(row=>chosenIDs.has(row.id)),ids=new Set(chosen.map(row=>row.id));
+        if(!ids.size)throw new Error("Choose records explicitly first.");
+        const next=records.map(row=>ids.has(row.id)?{...row,[field.name]:value}:row);
+        prepareEnvelope(payload,{...envelope(),records:next},true);
+        return {field,value,next,chosen_records:chosen.length,changes:chosen.filter(row=>row[field.name]!==value).map(row=>({id:row.id,before:row[field.name],after:value}))};
+      }
+      const previewNumeric=button("Preview chosen integer update",()=>{
+        if(committing)return tell("Wait for the current save to finish.",true);
+        try{const proposal=numericProposal(),text=JSON.stringify({format:"afterlife-field-update-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,selection:"explicit_chosen",field:proposal.field.name,new_value:proposal.value,total_records:records.length,chosen_records:proposal.chosen_records,changes:proposal.changes,scope:numericScope.textContent+" Read-only snapshot, not an apply plan or authorization for a later update."},null,2);if(new Blob([text]).size>MAX_BYTES)throw new Error("Preview exceeds10 MiB.");download(text,spec.app_id+"-integer-update-preview.json","application/json");tell(`Previewed ${proposal.changes.length} exact integer changes. Nothing saved.`);}catch(error){tell("Integer preview refused: "+error.message,true);}
+      });
+      const updateNumeric=button("Set chosen integer",async()=>{
+        if(committing)return tell("Wait for the current save to finish.",true);
+        if(dirty)return tell("Save or cancel editor changes before updating chosen records.",true);
+        try{const proposal=numericProposal();if(!proposal.changes.length)return tell("Chosen records already have this integer value.");
+          if(!confirm(`Set ${proposal.field.label} to ${proposal.value===null?"null":proposal.value} for ${proposal.changes.length} chosen records across all pages?`))return;
+          const before=records.map(row=>({...row}));if(await commit(proposal.next,{resetPage:true})){lastFieldUpdate={before,after:JSON.stringify(records)};undoFieldUpdate.hidden=false;panel.hidden=true;currentId=null;tell(`Updated ${proposal.changes.length} chosen integer values. Undo last field update is available until another record change, import or reload.`);}
+        }catch(error){tell("Integer update refused: "+error.message,true);}
+      });
+      selectionContent.append(numericField,numericValue,numericScope,previewNumeric,updateNumeric);
+    }
     const categoryPanel=node("details",undefined,"toolbar-group category-totals"),categoryContent=node("div",undefined,"toolbar-group-content");
     categoryPanel.append(node("summary","Matching category totals"),categoryContent);
     const categoryLabel=node("label","Count categories in"),categoryField=node("select");categoryField.setAttribute("aria-label","Count categories in");
