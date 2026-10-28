@@ -265,6 +265,7 @@
     let currentId = null;
     let lastDeleted = null;
     let lastFieldUpdate = null;
+    let lastDuplication = null;
     let lastRecordEdit = null;
     const chosenIDs = new Set();
     let dirty = false;
@@ -826,7 +827,7 @@
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
-      chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
       previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
     }
     function exportChosen(kind){
@@ -840,6 +841,29 @@
       if(committing)return tell("Wait for the current save to finish.",true);
       if(!chosenIDs.size)return tell("Choose records explicitly first.",true);
       try{const selected=records.filter(row=>chosenIDs.has(row.id));download(printableRecords(spec,selected,records.length,printScope.value==="visible"?visibleFields:null,true),spec.app_id+"-chosen-print.html","text/html;charset=utf-8");tell(`Downloaded printable view of ${selected.length} explicitly chosen records in original order. Printable columns setting applies; editable exports still keep all fields. Current records unchanged.`);}catch(error){tell(error.message,true);}
+    });
+    const undoDuplication=button("Undo chosen duplication",async()=>{
+      if(committing||!lastDuplication)return;
+      if(dirty)return tell("Save or cancel editor changes before undoing duplication.",true);
+      if(JSON.stringify(records)!==lastDuplication.after){lastDuplication=null;undoDuplication.hidden=true;return tell("Records changed since duplication; undo is unavailable.",true);}
+      const before=lastDuplication.before;if(await commit(before,{resetPage:true})){panel.hidden=true;currentId=null;tell("Chosen duplication undone; original collection restored.");}
+    });undoDuplication.hidden=true;
+    const previewChosenDuplicate=button("Preview chosen duplication",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      const ids=records.filter(row=>chosenIDs.has(row.id)).map(row=>row.id);if(!ids.length)return tell("Choose records explicitly first.",true);
+      const text=JSON.stringify({format:"afterlife-duplication-preview/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,total_records:records.length,chosen_record_ids:ids,proposed_total:records.length+ids.length,
+        scope:"Read-only IDs/counts for duplicating explicit chosen records in original order across all filters/pages. No new IDs reserved or record fields emitted. Copies would include all fields, including hidden fields; unsaved editor inputs excluded. Later duplicate revalidates current selection/capacity and requires confirmation; this is not an apply plan or freshness proof."},null,2);
+      if(new Blob([text]).size>MAX_BYTES)return tell("Duplication preview exceeds10 MiB.",true);download(text,spec.app_id+"-duplication-preview.json","application/json");tell("Downloaded chosen duplication preview. No records or IDs created.");
+    });
+    const duplicateChosen=button("Duplicate chosen records",async()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);
+      if(dirty)return tell("Save or cancel editor changes before duplicating chosen records.",true);
+      const selected=records.filter(row=>chosenIDs.has(row.id));if(!selected.length)return tell("Choose records explicitly first.",true);
+      if(records.length+selected.length>MAX_RECORDS)return tell("Duplication exceeds the record limit. Original records kept.",true);
+      if(!confirm(`Duplicate ${selected.length} explicitly chosen records with all fields, including hidden fields? Originals stay; fresh IDs and copies append in original order. Undo is available until another record change, import or reload.`))return;
+      try{const ids=new Set(records.map(row=>row.id)),copies=[];for(const row of selected){let id=null;for(let attempt=0;attempt<8;attempt++){const candidate="r-"+[...crypto.getRandomValues(new Uint8Array(16))].map(byte=>byte.toString(16).padStart(2,"0")).join("");if(!ids.has(candidate)){id=candidate;break;}}if(!id)throw new Error("Could not create a distinct record ID.");ids.add(id);copies.push({...row,id});}
+        const before=records.map(row=>({...row}));if(await commit([...records,...copies],{resetPage:true})){lastDuplication={before,after:JSON.stringify(records)};undoDuplication.hidden=false;panel.hidden=true;currentId=null;tell(`Duplicated ${copies.length} explicitly chosen records with fresh IDs. Originals kept; undo chosen duplication is available.`);}
+      }catch(error){tell("Duplication refused: "+error.message,true);}
     });
     const chosenApp=button("Download chosen app",()=>saveHTML(false,true));
     const previewChosenDelete=button("Preview chosen deletion",()=>{
@@ -889,7 +913,7 @@
       }catch(error){tell(error.message,true);}
     });
     chosenFieldChoice.hidden=previewChosenField.hidden=updateChosenField.hidden=!bulkFields.length;chosenFieldChoice.addEventListener("change",refreshChosen);
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,chosenPrint,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSV,chosenApp,chosenPrint,previewChosenDuplicate,duplicateChosen,undoDuplication,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     if(integerFields.length){
       const numericField=node("select");numericField.setAttribute("aria-label","Chosen integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
       for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
@@ -989,7 +1013,7 @@
       if (addOnly && !added.length) return tell("No new record IDs to add. Current records kept.");
       const incoming = addOnly ? [...records, ...added] : pendingImport.records;
       if (await commit(incoming, {resetPage: true})) {
-        lastDeleted = null; undo.hidden = true; lastFieldUpdate = null; undoFieldUpdate.hidden = true; dirty = false; panel.hidden = true; currentId = null;
+        lastDuplication=null;undoDuplication.hidden=true;lastDeleted = null; undo.hidden = true; lastFieldUpdate = null; undoFieldUpdate.hidden = true; dirty = false; panel.hidden = true; currentId = null;
         pendingImport = null; importReview.hidden = true;
         tell(addOnly ? `Added ${added.length} new records. Existing records kept.` : `Imported ${incoming.length} records.`);
       }
@@ -1292,6 +1316,7 @@
               "Browser storage could not be updated. ";
           }
         }
+        lastDuplication=null;undoDuplication.hidden=true;
         records = checked;
         chosenIDs.clear();
         lastRecordEdit=null;undoEdit.hidden=true;
