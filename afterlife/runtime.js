@@ -833,7 +833,7 @@
     function refreshChosen(){
       selectionHeading.textContent="Chosen record handoff"+(chosenIDs.size?` (${chosenIDs.size} chosen)`:"");
       chosenCount.textContent=`${chosenIDs.size} records chosen across all filters/pages. Unsaved editor inputs are excluded.`;
-      exportChosenSelection.disabled=duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
+      exportChosenSelection.disabled=duplicateChosen.disabled=previewChosenDuplicate.disabled=chosenPrint.disabled=previewChosenDelete.disabled=deleteChosen.disabled=chosenApp.disabled=chosenJSON.disabled=chosenProjection.disabled=chosenCSV.disabled=clearChosen.disabled=!chosenIDs.size;
       previewChosenField.disabled=updateChosenField.disabled=!chosenIDs.size||!chosenFieldChoice.value;
       refreshChosenTotals();
       refreshScopeChoices();
@@ -849,6 +849,11 @@
       try{download(kind==="json"?exportDataJSON({...envelope(),records:selected}):exportCSV(spec,selected,projected?visibleFields:null),spec.app_id+(projected?"-chosen-visible-columns-text.csv":"-chosen-data."+(kind==="json"?"json":"csv")),kind==="json"?"application/json":"text/csv;charset=utf-8;header=present");tell(`Downloaded ${selected.length} explicitly chosen records in original order. ${projected?"Only visible table columns plus Record ID included; hidden fields omitted deliberately.":"All fields included."} ${kind==="csv"?"CSV text is apostrophe-prefixed; use JSON/app for exact editable full-field data. ":""}Current records unchanged; protect the file.`);}catch(error){tell(error.message,true);}
     }
     const chosenJSON=button("Export chosen JSON",()=>exportChosen("json")),chosenCSV=button("Export chosen CSV",()=>exportChosen("csv")),clearChosen=button("Clear chosen records",()=>{chosenIDs.clear();render();});
+    const chosenProjection=button("Download chosen visible-field JSON",()=>{
+      if(committing)return tell("Wait for the current save to finish.",true);const selected=records.filter(row=>chosenIDs.has(row.id));if(!selected.length)return tell("Choose records explicitly first.",true);
+      const fields=spec.fields.filter(field=>visibleFields.has(field.name)),value={format:"afterlife-record-projection/v1",app_id:spec.app_id,spec_fingerprint:payload.spec_fingerprint,fields:fields.map(field=>({name:field.name,type:field.type})),omitted_field_count:spec.fields.length-fields.length,records:selected.map(row=>Object.fromEntries([["id",row.id],...fields.map(field=>[field.name,row[field.name]])])),scope:"Deliberate partial sharing copy: chosen stored records in collection order, only visible table fields plus private Record IDs. Exact JSON types/literal values retained; hidden fields omitted, not removed from the app. Unsaved editor inputs excluded. Not a full backup or native import envelope; use Export JSON or app download for editable recovery. No save, merge, deletion, freshness check or authorization for record mutation."};
+      const text=JSON.stringify(value,null,2);if(new Blob([text]).size>MAX_BYTES)return tell("Chosen field projection exceeds10 MiB.",true);download(text,spec.app_id+"-chosen-visible-field-projection.json","application/json");tell(`Downloaded ${selected.length} chosen records with ${fields.length} visible fields and Record IDs. Partial sharing copy only; full app data kept.`);
+    });
     const scopeChoices = node("fieldset", undefined, "toolbar-group");
     scopeChoices.append(node("legend", "Choose from the current view"));
     const choiceScope = node("select"), choiceAction = node("select");
@@ -1006,7 +1011,7 @@
       }catch(error){tell(error.message,true);}
     });
     chosenFieldChoice.hidden=previewChosenField.hidden=updateChosenField.hidden=!bulkFields.length;chosenFieldChoice.addEventListener("change",refreshChosen);
-    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenCSVScopeLabel,chosenCSV,chosenApp,chosenPrint,previewChosenDuplicate,duplicateChosen,undoDuplication,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
+    chooseMode.addEventListener("change",render);selectionContent.append(chooseLabel,selectionScope,chosenCount,chosenJSON,chosenProjection,node("p","Visible-field JSON is a partial sharing copy with exact types and private Record IDs; it cannot replace a full JSON backup or be imported as app data."),chosenCSVScopeLabel,chosenCSV,chosenApp,chosenPrint,previewChosenDuplicate,duplicateChosen,undoDuplication,previewChosenDelete,deleteChosen,chosenFieldChoice,previewChosenField,updateChosenField,clearChosen);selectionPanel.append(selectionHeading,selectionContent);
     if(integerFields.length){
       const numericField=node("select");numericField.setAttribute("aria-label","Chosen integer field");const none=node("option","Choose integer field…");none.value="";numericField.append(none);
       for(const field of integerFields){const option=node("option",field.label);option.value=field.name;numericField.append(option);}
