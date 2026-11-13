@@ -59,6 +59,33 @@ def patch_csv_main(argv):
     except (CompileError,OSError,ValueError)as exc:print('afterlife: '+str(exc),file=sys.stderr);return 2
 
 
+def propose_export_main(argv):
+    parser = argparse.ArgumentParser(prog="afterlife propose-export", description="Create a separate private backup from selected existing changed records, guarded by the complete exact saved review. Preserve current order/unselected rows; never add/delete records or mutate inputs.")
+    parser.add_argument("spec", type=Path)
+    parser.add_argument("backup", type=Path)
+    parser.add_argument("--against", type=Path, required=True, help="Complete current matching backup")
+    parser.add_argument("--review", type=Path, required=True, help="Complete review-export --output guard for these exact backups")
+    parser.add_argument("--record-id", action="append", required=True, help="Existing changed ID to propose; repeat for multiple records")
+    parser.add_argument("-o", "--output", type=Path, required=True, help="Private proposed backup containing record values")
+    parser.add_argument("--force", action="store_true", help="Replace an existing proposal output, never an input")
+    args = parser.parse_args(argv)
+    try:
+        if any(_same_file(args.output, source) for source in (args.spec, args.backup, args.against, args.review)):
+            raise CompileError("Proposal output must not overwrite source inputs or the review")
+        if args.output.is_symlink() or (args.output.exists() and not args.output.is_file()):
+            raise CompileError("Proposal output must be a non-symlink regular file")
+        from .transfers import propose_selected_export
+        from .compiler import _canonical
+        proposal, receipt = propose_selected_export(load_json(args.spec), load_json(args.against),
+                                                  load_json(args.backup), load_json(args.review), args.record_id)
+        write_output(args.output, _canonical(proposal) + "\n", force=args.force)
+        print(json.dumps(receipt, indent=2, ensure_ascii=True))
+        return 0
+    except (CompileError, OSError, ValueError) as exc:
+        print("afterlife: " + str(exc), file=sys.stderr)
+        return 2
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "showcase":
@@ -76,13 +103,15 @@ def main(argv=None):
         return import_csv_main(argv[1:])
     if argv and argv[0] == "review-export":
         return review_export_main(argv[1:])
+    if argv and argv[0] == "propose-export":
+        return propose_export_main(argv[1:])
     from_export = bool(argv and argv[0] == "from-export")
     if from_export:
         argv.pop(0)
     from_python = bool(argv and argv[0] == "from-python")
     if from_python:
         argv.pop(0)
-    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample, 'import-csv' for an explicitly typed complete backup, or 'patch-csv' for guarded partial-column backup edits. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
+    parser = argparse.ArgumentParser(description="Compile a record app into one offline HTML file. Use 'showcase' for an interactive product sample, 'import-csv' for an explicitly typed complete backup, or 'patch-csv' for guarded partial-column backup edits. Use 'review-export' to inspect matching backups and 'propose-export' for a guarded private proposal from selected existing edits. Use 'from-export' to rebuild a matching JSON backup, 'from-python' to extract a supported dataclass model, 'audit-python' to report unsupported application behavior, or 'verify-artifact' to check retained HTML against a manifest.")
     parser.add_argument("spec", type=Path, help="Python model module" if from_python else "afterlife/v1 app specification")
     parser.add_argument("data", type=Path, help="JSON object containing records")
     parser.add_argument("-o", "--output", type=Path, required=True, help="new HTML artifact")

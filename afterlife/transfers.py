@@ -60,3 +60,30 @@ def select_review_changes(report, record_ids):
             "selected_counts":{"added":len(added),"removed":len(removed),"changed":len(edits)},
             "omitted_change_records":len(known)-len(selected),
             "scope":"Selected change entries only; unchanged or unknown IDs cannot be selected. Counts and snapshot hashes still cover both complete normalized backups. Record values excluded. Full comparison cost remains. This selection is not a from-export --review guard; use --output to save the complete restoration review."}
+
+
+def propose_selected_export(spec, current, incoming, guard, record_ids):
+    """Build a separate proposal for chosen existing edits, never merge into current inputs."""
+    report = review_export(spec, current, incoming)
+    if _canonical(guard) != _canonical(report):
+        raise CompileError("Stale or modified backup review; compare both complete backups again before proposing changes")
+    selected = set(record_ids)
+    changed = {row["id"] for row in report["changed"]}
+    if not 1 <= len(record_ids) <= 1000 or len(selected) != len(record_ids) or not selected <= changed:
+        raise CompileError("Select 1..1000 distinct existing changed record IDs; additions, removals, unchanged and unknown IDs cannot be proposed")
+    before, after = backup_records(spec, current), backup_records(spec, incoming)
+    incoming_by_id = {row["id"]: row for row in after}
+    # Retain current order, unchosen rows and omitted incoming records. Selection never adds/deletes.
+    records = [incoming_by_id[row["id"]] if row["id"] in selected else row for row in before]
+    proposal = {key: current[key] for key in ("format", "app_id", "spec_fingerprint")}
+    proposal["records"] = records
+    proposal["records"] = backup_records(spec, proposal)
+    if len(_canonical(proposal).encode("utf-8")) + 1 > MAX_BYTES:
+        raise CompileError("Normalized proposed backup exceeds 10 MiB")
+    return proposal, {"format": "afterlife-selected-export-proposal/v1", "app_id": report["app_id"],
+                      "spec_fingerprint": report["spec_fingerprint"],
+                      "current_records_sha256": report["current_records_sha256"],
+                      "incoming_records_sha256": report["incoming_records_sha256"],
+                      "proposed_records_sha256": _hash(_canonical(proposal["records"])),
+                      "selected_existing_records": len(selected), "retained_current_records": len(before) - len(selected),
+                      "scope": "Complete backups and the exact full review validated. Only selected existing changed rows are replaced in a separate private backup; current order and unselected records stay. No additions, deletions, input mutation, browser save or HTML rebuild. Proposal output contains record values; this receipt omits IDs/field names/values. Hashes and app identity may be sensitive. Separately review the proposal against current before guarded from-export. No authentication, lock on later inputs or merge conflict resolution."}
